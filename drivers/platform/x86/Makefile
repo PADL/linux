@@ -167,3 +167,6 @@ obj-$(CONFIG_SEL3350_PLATFORM)		+= sel3350-platform.o
 
 # OneXPlayer
 obj-$(CONFIG_OXP_EC)			+= oxpec.o
+
+# Zodiac Radio Access Point
+obj-$(CONFIG_ZII_RAP) 			+= zii-rap.o
