@@ -495,6 +495,9 @@ struct mv88e6xxx_chip {
 
 	/* Global2 scratch register config data3 */
 	u8 g2_scratch_config3;
+
+	/* Remote Management Unit state. */
+	struct net_device *rmu_conduit;
 };
 
 #define TCAM_MATCH_SIZE 96
