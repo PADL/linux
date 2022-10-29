@@ -53,4 +53,46 @@ void mv88e6xxx_rmu_frame2reg_handler(struct dsa_switch *ds,
 				     struct sk_buff *skb,
 				     u8 seqno)
 {
+	struct mv88e6xxx_rmu_header *rmu_header;
+	struct mv88e6xxx_chip *chip = ds->priv;
+	struct net_device *conduit;
+	unsigned char *ethhdr;
+	u8 expected_seqno;
+
+	/* Check received destination MAC is the conduit MAC address */
+	conduit = READ_ONCE(chip->rmu_conduit);
+	if (!conduit)
+		goto drop;
+
+	ethhdr = skb_mac_header(skb);
+	if (!ether_addr_equal(conduit->dev_addr, ethhdr)) {
+		dev_dbg_ratelimited(ds->dev, "RMU: mismatched MAC address for request: rx %pM expecting %pM\n",
+				    ethhdr, conduit->dev_addr);
+		goto drop;
+	}
+
+	expected_seqno = dsa_inband_seqno(&chip->rmu_inband);
+	if (seqno != expected_seqno) {
+		dev_dbg_ratelimited(ds->dev, "RMU: mismatched seqno for request: rx %d expecting %d\n",
+				    seqno, expected_seqno);
+		goto drop;
+	}
+
+	if (skb->len < 4 + sizeof(*rmu_header)) {
+		dev_dbg_ratelimited(ds->dev, "RMU: response too short (%d bytes)\n",
+				    skb->len);
+		dsa_inband_complete(&chip->rmu_inband, NULL, 0, -ETIMEDOUT);
+		goto drop;
+	}
+
+	rmu_header = (struct mv88e6xxx_rmu_header *)(skb->data + 4);
+	if (rmu_header->format != MV88E6XXX_RMU_RESP_FORMAT_1 &&
+	    rmu_header->format != MV88E6XXX_RMU_RESP_FORMAT_2) {
+		dev_dbg_ratelimited(ds->dev, "RMU: invalid format: rx %d\n",
+				    be16_to_cpu(rmu_header->format));
+		goto drop;
+	}
+
+drop:
+	return;
 }
