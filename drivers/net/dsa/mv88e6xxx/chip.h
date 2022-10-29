@@ -460,6 +460,7 @@ struct mv88e6xxx_chip {
 
 	/* Remote Management Unit state. */
 	struct net_device *rmu_conduit;
+	struct dsa_inband rmu_inband;
 };
 
 #define TCAM_MATCH_SIZE 96
