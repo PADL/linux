@@ -6,10 +6,142 @@
  *
  */
 
+#include <linux/dsa/mv88e6xxx.h>
 #include <net/dsa.h>
 #include "chip.h"
 #include "global1.h"
 #include "rmu.h"
+
+static const u8 mv88e6xxx_rmu_dest_addr[ETH_ALEN] = {
+	0x01, 0x50, 0x43, 0x00, 0x00, 0x00
+};
+
+static void mv88e6xxx_rmu_create_l2(struct dsa_switch *ds,
+				    struct net_device *conduit,
+				    struct sk_buff *skb,
+				    bool edsa)
+{
+	struct dsa_tagger_data *tagger_data = ds->tagger_data;
+	struct ethhdr *eth;
+	u8 *header;
+
+	/* Create RMU L2 header. */
+	header = skb_push(skb, 2);
+	/* Two bytes of EtherType, which is ignored by the switch */
+	header[0] = 0;
+	header[1] = 0;
+
+	/* Ask tagger to add {E}DSA header */
+	tagger_data->rmu_reg2frame(ds, skb);
+
+	/* Insert RMU MAC destination address */
+	eth = skb_push(skb, ETH_ALEN * 2);
+	memcpy(eth->h_dest, mv88e6xxx_rmu_dest_addr, ETH_ALEN);
+	ether_addr_copy(eth->h_source, conduit->dev_addr);
+	skb_reset_network_header(skb);
+}
+
+static void mv88e6xxx_rmu_fill_seqno(struct sk_buff *skb, u32 seqno, int offset)
+{
+	u8 *dsa_header = skb->data + offset;
+
+	dsa_header[3] = seqno;
+}
+
+/* 2 MAC address, 2 byte Ethertype, 2 bytes padding, to DSA header */
+static void mv88e6xxx_rmu_fill_seqno_edsa(struct sk_buff *skb, u32 seqno)
+{
+	mv88e6xxx_rmu_fill_seqno(skb, seqno, ETH_ALEN * 2 + 2 + 2);
+}
+
+/* 2 MAC address, to DSA header */
+static void mv88e6xxx_rmu_fill_seqno_dsa(struct sk_buff *skb, u32 seqno)
+{
+	mv88e6xxx_rmu_fill_seqno(skb, seqno, ETH_ALEN * 2);
+}
+
+static int mv88e6xxx_rmu_request(struct mv88e6xxx_chip *chip,
+				 const void *req, int req_len,
+				 void *resp, unsigned int resp_len,
+				 int timeout_ms)
+{
+	struct net_device *conduit;
+	struct sk_buff *skb;
+	unsigned char *data;
+	bool edsa;
+
+	/* Capture conduit once: it can be cleared concurrently when the
+	 * conduit goes down (e.g. during reboot). Also guard against the
+	 * conduit being torn down out from under us, in which case its
+	 * dev_addr may already have been released.
+	 */
+	conduit = READ_ONCE(chip->rmu_conduit);
+	if (unlikely(!conduit || !conduit->dev_addr)) {
+		dev_err_ratelimited(chip->dev, "RMU: conduit device unavailable");
+		return -EINVAL;
+	}
+
+	skb = dev_alloc_skb(req_len + EDSA_HLEN + 2 * ETH_ALEN + 2);
+	if (!skb)
+		return -ENOMEM;
+
+	/* Insert RMU request message */
+	data = skb_put(skb, req_len);
+	memcpy(data, req, req_len);
+
+	edsa = chip->tag_protocol == DSA_TAG_PROTO_EDSA;
+
+	if (!chip->ds->tagger_data) {
+		kfree_skb(skb);
+		return -EOPNOTSUPP; /* can happen on teardown */
+	}
+
+	mv88e6xxx_rmu_create_l2(chip->ds, conduit, skb, edsa);
+	skb->dev = conduit;
+
+	return dsa_inband_request(&chip->rmu_inband, skb,
+				  (edsa ? mv88e6xxx_rmu_fill_seqno_edsa :
+				   mv88e6xxx_rmu_fill_seqno_dsa),
+				  resp, resp_len, timeout_ms);
+}
+
+static int mv88e6xxx_rmu_get_id(struct mv88e6xxx_chip *chip)
+{
+	const __be16 req[4] = {
+		MV88E6XXX_RMU_REQ_FORMAT_GET_ID,
+		MV88E6XXX_RMU_REQ_PAD,
+		MV88E6XXX_RMU_REQ_CODE_GET_ID,
+		MV88E6XXX_RMU_REQ_DATA};
+	struct mv88e6xxx_rmu_header resp;
+	int resp_len;
+	int ret = -1;
+
+	resp_len = sizeof(resp);
+	ret = mv88e6xxx_rmu_request(chip, req, sizeof(req),
+				    &resp, resp_len,
+				    MV88E6XXX_RMU_REQUEST_TIMEOUT_MS);
+	if (ret < 0) {
+		dev_dbg(chip->dev, "RMU: error for command GET_ID %pe\n",
+			ERR_PTR(ret));
+		return ret;
+	}
+
+	if (ret < resp_len) {
+		dev_err(chip->dev, "RMU: GET_ID returned wrong length: rx %d expecting %d\n",
+			ret, resp_len);
+		return -EPROTO;
+	}
+
+	if (resp.code != MV88E6XXX_RMU_RESP_CODE_GOT_ID) {
+		dev_dbg(chip->dev, "RMU: GET_ID returned wrong code %d\n",
+			be16_to_cpu(resp.code));
+		return -EPROTO;
+	}
+
+	dev_dbg(chip->dev, "RMU: product ID %4x\n", be16_to_cpu(resp.prodnr));
+
+	return 0;
+}
 
 void mv88e6xxx_rmu_conduit_state_change(struct dsa_switch *ds,
 					const struct net_device *conduit,
@@ -37,11 +169,22 @@ void mv88e6xxx_rmu_conduit_state_change(struct dsa_switch *ds,
 
 		WRITE_ONCE(chip->rmu_conduit, (struct net_device *)conduit);
 
-		dev_dbg(chip->dev, "RMU: Enabled on port %d", port);
+		/* Get the device ID to prove that the RMU works */
+		ret = mv88e6xxx_rmu_get_id(chip);
+		if (ret < 0) {
+			dev_err(chip->dev, "RMU: initialization check failed %pe",
+				ERR_PTR(ret));
+			goto out;
+		}
+		chip->rmu_state = MV88E6XXX_RMU_ENABLED;
+
+		dev_info(chip->dev, "RMU: enabled on port %d via conduit device %s",
+			 port, chip->rmu_conduit->name);
 	} else {
 		if (chip->info->ops->rmu_disable)
 			chip->info->ops->rmu_disable(chip);
 
+		chip->rmu_state = MV88E6XXX_RMU_DISABLED;
 		WRITE_ONCE(chip->rmu_conduit, NULL);
 	}
 
@@ -58,6 +201,8 @@ void mv88e6xxx_rmu_frame2reg_handler(struct dsa_switch *ds,
 	struct net_device *conduit;
 	unsigned char *ethhdr;
 	u8 expected_seqno;
+	int resp_len;
+	int err = 0;
 
 	/* Check received destination MAC is the conduit MAC address */
 	conduit = READ_ONCE(chip->rmu_conduit);
@@ -86,13 +231,15 @@ void mv88e6xxx_rmu_frame2reg_handler(struct dsa_switch *ds,
 	}
 
 	rmu_header = (struct mv88e6xxx_rmu_header *)(skb->data + 4);
+	resp_len = skb->len - 4;
 	if (rmu_header->format != MV88E6XXX_RMU_RESP_FORMAT_1 &&
 	    rmu_header->format != MV88E6XXX_RMU_RESP_FORMAT_2) {
 		dev_dbg_ratelimited(ds->dev, "RMU: invalid format: rx %d\n",
 				    be16_to_cpu(rmu_header->format));
-		goto drop;
+		err = -EPROTO;
 	}
 
+	dsa_inband_complete(&chip->rmu_inband, rmu_header, resp_len, err);
 drop:
 	return;
 }
