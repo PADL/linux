@@ -387,6 +387,15 @@ struct mv88e6xxx_tcam {
 	struct list_head entries;
 };
 
+enum mv88e6xxx_rmu_state {
+	MV88E6XXX_RMU_DISABLED = 0,
+	MV88E6XXX_RMU_ENABLED = 1,
+	/* Reserved: a future RMU-only mode (e.g. MV88E6XXX_RMU_ONLY_ENABLED)
+	 * may be added here to indicate a switch operating purely via RMU
+	 * without an MDIO bus.
+	 */
+};
+
 struct mv88e6xxx_chip {
 	const struct mv88e6xxx_info *info;
 
@@ -505,6 +514,7 @@ struct mv88e6xxx_chip {
 	/* Remote Management Unit state. */
 	struct net_device *rmu_conduit;
 	struct dsa_inband rmu_inband;
+	enum mv88e6xxx_rmu_state rmu_state;
 };
 
 #define TCAM_MATCH_SIZE 96
