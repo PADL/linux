@@ -105,6 +105,147 @@ static int mv88e6xxx_rmu_request(struct mv88e6xxx_chip *chip,
 				  MV88E6XXX_RMU_WAIT_TIME_MS);
 }
 
+int mv88e6xxx_rmu_write(struct mv88e6xxx_chip *chip, int addr, int reg, u16 val)
+{
+	__be16 req[] = {
+		MV88E6XXX_RMU_REQ_FORMAT_SOHO,
+		MV88E6XXX_RMU_REQ_PAD,
+		MV88E6XXX_RMU_REQ_CODE_REG_RW,
+		MV88E6XXX_RMU_REQ_RW_0_WRITE(addr, reg),
+		htons(val),
+		MV88E6XXX_RMU_REQ_RW_0_END,
+		MV88E6XXX_RMU_REQ_RW_1_END,
+	};
+	struct mv88e6xxx_rmu_header resp;
+	int resp_len;
+	int ret = -1;
+
+	if (chip->rmu_state == MV88E6XXX_RMU_DISABLED)
+		return -EOPNOTSUPP;
+
+	resp_len = sizeof(resp);
+	ret = mv88e6xxx_rmu_request(chip, req, sizeof(req),
+				    &resp, resp_len,
+				    MV88E6XXX_RMU_REQUEST_TIMEOUT_MS);
+	if (ret < 0) {
+		dev_dbg(chip->dev, "RMU: error for command REQ_RW:WRITE %pe "
+			"addr %d reg %d val %04x\n",
+			ERR_PTR(ret), addr, reg, val);
+		return ret;
+	}
+
+	if (ret < resp_len) {
+		dev_err(chip->dev, "RMU: write returned wrong length: rx %d expecting %d\n",
+			ret, resp_len);
+		return -EPROTO;
+	}
+
+	if (resp.code != MV88E6XXX_RMU_RESP_CODE_REG_RW) {
+		dev_err(chip->dev, "RMU: write returned wrong code %d\n",
+			be16_to_cpu(resp.code));
+		return -EPROTO;
+	}
+
+	return 0;
+}
+
+int mv88e6xxx_rmu_read(struct mv88e6xxx_chip *chip, int addr, int reg,
+		       u16 *val)
+{
+	__be16 req[] = {
+		MV88E6XXX_RMU_REQ_FORMAT_SOHO,
+		MV88E6XXX_RMU_REQ_PAD,
+		MV88E6XXX_RMU_REQ_CODE_REG_RW,
+		MV88E6XXX_RMU_REQ_RW_0_READ(addr, reg),
+		0,
+		MV88E6XXX_RMU_REQ_RW_0_END,
+		MV88E6XXX_RMU_REQ_RW_1_END,
+	};
+	struct mv88e6xxx_rmu_rw_resp resp;
+	int resp_len;
+	int ret = -1;
+
+	if (chip->rmu_state == MV88E6XXX_RMU_DISABLED)
+		return -EOPNOTSUPP;
+
+	resp_len = sizeof(resp);
+	ret = mv88e6xxx_rmu_request(chip, req, sizeof(req),
+				    &resp, resp_len,
+				    MV88E6XXX_RMU_REQUEST_TIMEOUT_MS);
+	if (ret < 0) {
+		dev_dbg(chip->dev, "RMU: error for command REQ_RW:READ %pe "
+			"addr %d reg %d\n",
+			ERR_PTR(ret), addr, reg);
+		return ret;
+	}
+
+	if (ret < resp_len) {
+		dev_err(chip->dev, "RMU: read returned wrong length: rx %d expecting %d\n",
+			ret, resp_len);
+		return -EPROTO;
+	}
+
+	if (resp.rmu_header.code != MV88E6XXX_RMU_RESP_CODE_REG_RW) {
+		dev_err(chip->dev, "RMU: read returned wrong code %d\n",
+			be16_to_cpu(resp.rmu_header.code));
+		return -EPROTO;
+	}
+
+	*val = ntohs(resp.value);
+
+	return 0;
+}
+
+int mv88e6xxx_rmu_wait_bit(struct mv88e6xxx_chip *chip, int addr, int reg,
+			   int bit, int val)
+{
+	__be16 req[] = {
+		MV88E6XXX_RMU_REQ_FORMAT_SOHO,
+		MV88E6XXX_RMU_REQ_PAD,
+		MV88E6XXX_RMU_REQ_CODE_REG_RW,
+		val ? MV88E6XXX_RMU_REQ_RW_0_WAIT_1(addr, reg) :
+		MV88E6XXX_RMU_REQ_RW_0_WAIT_0(addr, reg),
+		htons((bit & 0xf) << 8),
+		MV88E6XXX_RMU_REQ_RW_0_END,
+		MV88E6XXX_RMU_REQ_RW_1_END,
+	};
+	struct mv88e6xxx_rmu_rw_resp resp;
+	int resp_len;
+	int ret = -1;
+
+	if (chip->rmu_state == MV88E6XXX_RMU_DISABLED)
+		return -EOPNOTSUPP;
+
+	resp_len = sizeof(resp);
+	ret = mv88e6xxx_rmu_request(chip, req, sizeof(req),
+				    &resp, resp_len,
+				    MV88E6XXX_RMU_WAIT_BIT_TIMEOUT_MS);
+	if (ret < 0) {
+		dev_dbg(chip->dev, "RMU: error for command REQ_RW:WAIT %pe\n",
+			ERR_PTR(ret));
+		return ret;
+	}
+
+	if (ret < resp_len) {
+		dev_err(chip->dev, "RMU: wait on bit returned wrong length: rx %d expecting %d\n",
+			ret, resp_len);
+		return -EPROTO;
+	}
+
+	if (resp.rmu_header.code != MV88E6XXX_RMU_RESP_CODE_REG_RW) {
+		dev_err(chip->dev, "RMU: wait on bit returned wrong code %d\n",
+			be16_to_cpu(resp.rmu_header.code));
+		return -EPROTO;
+	}
+
+	if ((ntohs(resp.value) & 0xff) == 0xff) {
+		dev_err(chip->dev, "RMU: wait on bit timed out\n");
+		return -ETIMEDOUT;
+	}
+
+	return 0;
+}
+
 static int mv88e6xxx_rmu_get_id(struct mv88e6xxx_chip *chip)
 {
 	const __be16 req[4] = {
