@@ -1358,9 +1358,9 @@ static size_t mv88e6390_stats_get_stat(struct mv88e6xxx_chip *chip, int port,
 	return 1;
 }
 
-static size_t mv88e6xxx_stats_get_stat(struct mv88e6xxx_chip *chip, int port,
-				       const struct mv88e6xxx_hw_stat *stat,
-				       uint64_t *data)
+size_t mv88e6xxx_stats_get_stat(struct mv88e6xxx_chip *chip, int port,
+				const struct mv88e6xxx_hw_stat *stat,
+				uint64_t *data)
 {
 	int ret = 0;
 
@@ -1381,6 +1381,22 @@ static size_t mv88e6xxx_stats_get_stats(struct mv88e6xxx_chip *chip, int port,
 {
 	const struct mv88e6xxx_hw_stat *stat;
 	size_t i, j;
+	int err;
+
+	err = mv88e6xxx_rmu_stats(chip, port, data, mv88e6xxx_hw_stats,
+				  ARRAY_SIZE(mv88e6xxx_hw_stats));
+	if (err > 0)
+		return err;
+
+	if (!mv88e6xxx_rmu_can_mdio_fallback(chip, err)) {
+		/* Zero the counters, which may have been partially filled,
+		 * but preserve the layout for the stats that follow.
+		 */
+		j = mv88e6xxx_stats_get_sset_count(chip,
+						   chip->info->stats_type);
+		memset(data, 0, j * sizeof(*data));
+		return j;
+	}
 
 	for (i = 0, j = 0; i < ARRAY_SIZE(mv88e6xxx_hw_stats); i++) {
 		stat = &mv88e6xxx_hw_stats[i];
