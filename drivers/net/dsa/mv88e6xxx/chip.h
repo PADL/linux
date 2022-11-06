@@ -1021,4 +1021,8 @@ int mv88e6xxx_vtu_walk(struct mv88e6xxx_chip *chip,
 
 int mv88e6xxx_broadcast_setup(struct mv88e6xxx_chip *chip, u16 vid);
 
+size_t mv88e6xxx_stats_get_stat(struct mv88e6xxx_chip *chip, int port,
+				const struct mv88e6xxx_hw_stat *stat,
+				uint64_t *data);
+
 #endif /* _MV88E6XXX_CHIP_H */
