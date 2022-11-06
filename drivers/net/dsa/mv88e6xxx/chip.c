@@ -1336,9 +1336,9 @@ static size_t mv88e6390_stats_get_stat(struct mv88e6xxx_chip *chip, int port,
 	return 1;
 }
 
-static size_t mv88e6xxx_stats_get_stat(struct mv88e6xxx_chip *chip, int port,
-				       const struct mv88e6xxx_hw_stat *stat,
-				       uint64_t *data)
+size_t mv88e6xxx_stats_get_stat(struct mv88e6xxx_chip *chip, int port,
+				const struct mv88e6xxx_hw_stat *stat,
+				uint64_t *data)
 {
 	int ret = 0;
 
@@ -1359,6 +1359,15 @@ static size_t mv88e6xxx_stats_get_stats(struct mv88e6xxx_chip *chip, int port,
 {
 	const struct mv88e6xxx_hw_stat *stat;
 	size_t i, j;
+	int err;
+
+	err = mv88e6xxx_rmu_stats(chip, port, data, mv88e6xxx_hw_stats,
+				  ARRAY_SIZE(mv88e6xxx_hw_stats));
+	if (err > 0)
+		return err;
+
+	if (err != -EOPNOTSUPP && err != -ETIMEDOUT)
+		return err;
 
 	for (i = 0, j = 0; i < ARRAY_SIZE(mv88e6xxx_hw_stats); i++) {
 		stat = &mv88e6xxx_hw_stats[i];
