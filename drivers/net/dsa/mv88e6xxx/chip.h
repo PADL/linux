@@ -355,6 +355,8 @@ enum mv88e6xxx_rmu_state {
 	 */
 };
 
+#define MV88E6XXX_RMU_IS_SLOW	BIT(0)
+
 struct mv88e6xxx_chip {
 	const struct mv88e6xxx_info *info;
 
@@ -471,6 +473,10 @@ struct mv88e6xxx_chip {
 	struct net_device *rmu_conduit;
 	struct dsa_inband rmu_inband;
 	enum mv88e6xxx_rmu_state rmu_state;
+	u8 rmu_flags;
+	ktime_t rmu_read_latencies[16];
+	u32 rmu_samples;
+	ktime_t smi_read_latency;
 };
 
 #define TCAM_MATCH_SIZE 96
