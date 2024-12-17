@@ -17,3 +17,11 @@ config NET_DSA_MV88E6XXX_PTP
 	help
 	  Say Y to enable PTP hardware timestamping on Marvell 88E6xxx switch
 	  chips that support it.
+
+config NET_DSA_MV88E6XXX_SRP
+	bool "SRP support for Marvell 88E6xxx"
+	default n
+	depends on NET_DSA_MV88E6XXX = y || NET_DSA_MV88E6XXX = m
+	help
+	  Say Y to enable AVB Class A and Class B admission control on
+	  Marvell 88E6xxx chips that support it.
