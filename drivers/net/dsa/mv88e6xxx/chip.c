@@ -32,6 +32,7 @@
 #include <linux/phylink.h>
 #include <net/dsa.h>
 
+#include "avb.h"
 #include "chip.h"
 #include "devlink.h"
 #include "global1.h"
@@ -2311,7 +2312,8 @@ static int mv88e6xxx_port_db_load_purge(struct mv88e6xxx_chip *chip, int port,
 		if (!entry.portvec)
 			entry.state = 0;
 	} else {
-		if (state == MV88E6XXX_G1_ATU_DATA_STATE_UC_STATIC)
+		if (state == MV88E6XXX_G1_ATU_DATA_STATE_UC_STATIC ||
+		    state == MV88E6XXX_G1_ATU_DATA_STATE_UC_STATIC_AVB_NRL)
 			entry.portvec = BIT(port);
 		else
 			entry.portvec |= BIT(port);
@@ -2888,11 +2890,18 @@ static int mv88e6xxx_port_fdb_add(struct dsa_switch *ds, int port,
 				  struct dsa_db db)
 {
 	struct mv88e6xxx_chip *chip = ds->priv;
+	u8 state;
 	int err;
 
+#ifdef CONFIG_NET_DSA_MV88E6XXX_SRP
+	if (chip->avb_tc_policy.port_mask & BIT(port))
+		state = MV88E6XXX_G1_ATU_DATA_STATE_UC_STATIC_AVB_NRL;
+	else
+#endif
+		state = MV88E6XXX_G1_ATU_DATA_STATE_UC_STATIC;
+
 	mv88e6xxx_reg_lock(chip);
-	err = mv88e6xxx_port_db_load_purge(chip, port, addr, vid,
-					   MV88E6XXX_G1_ATU_DATA_STATE_UC_STATIC);
+	err = mv88e6xxx_port_db_load_purge(chip, port, addr, vid, state);
 	mv88e6xxx_reg_unlock(chip);
 
 	return err;
@@ -4486,6 +4495,7 @@ static const struct mv88e6xxx_ops mv88e6161_ops = {
 	.ptp_ops = &mv88e6165_ptp_ops,
 	.phylink_get_caps = mv88e6185_phylink_get_caps,
 	.set_max_frame_size = mv88e6185_g1_set_max_frame_size,
+	.tc_ops = &mv88e6352_tc_ops,
 };
 
 static const struct mv88e6xxx_ops mv88e6165_ops = {
@@ -4523,6 +4533,7 @@ static const struct mv88e6xxx_ops mv88e6165_ops = {
 	.avb_ops = &mv88e6165_avb_ops,
 	.ptp_ops = &mv88e6165_ptp_ops,
 	.phylink_get_caps = mv88e6185_phylink_get_caps,
+	.tc_ops = &mv88e6352_tc_ops,
 };
 
 static const struct mv88e6xxx_ops mv88e6171_ops = {
@@ -4942,10 +4953,11 @@ static const struct mv88e6xxx_ops mv88e6191_ops = {
 	.serdes_get_stats = mv88e6390_serdes_get_stats,
 	.serdes_get_regs_len = mv88e6390_serdes_get_regs_len,
 	.serdes_get_regs = mv88e6390_serdes_get_regs,
-	.avb_ops = &mv88e6390_avb_ops,
+	.avb_ops = &mv88e6352_avb_ops,
 	.ptp_ops = &mv88e6352_ptp_ops,
 	.phylink_get_caps = mv88e6390_phylink_get_caps,
 	.pcs_ops = &mv88e6390_pcs_ops,
+	.tc_ops = &mv88e6352_tc_ops,
 };
 
 static const struct mv88e6xxx_ops mv88e6240_ops = {
@@ -5006,6 +5018,7 @@ static const struct mv88e6xxx_ops mv88e6240_ops = {
 	.ptp_ops = &mv88e6352_ptp_ops,
 	.phylink_get_caps = mv88e6352_phylink_get_caps,
 	.pcs_ops = &mv88e6352_pcs_ops,
+	.tc_ops = &mv88e6352_tc_ops,
 };
 
 static const struct mv88e6xxx_ops mv88e6250_ops = {
@@ -5051,6 +5064,7 @@ static const struct mv88e6xxx_ops mv88e6250_ops = {
 	.ptp_ops = &mv88e6250_ptp_ops,
 	.phylink_get_caps = mv88e6250_phylink_get_caps,
 	.set_max_frame_size = mv88e6185_g1_set_max_frame_size,
+	.tc_ops = &mv88e6352_tc_ops,
 };
 
 static const struct mv88e6xxx_ops mv88e6290_ops = {
@@ -5112,6 +5126,7 @@ static const struct mv88e6xxx_ops mv88e6290_ops = {
 	.ptp_ops = &mv88e6390_ptp_ops,
 	.phylink_get_caps = mv88e6390_phylink_get_caps,
 	.pcs_ops = &mv88e6390_pcs_ops,
+	.tc_ops = &mv88e6390_tc_ops,
 };
 
 static const struct mv88e6xxx_ops mv88e6320_ops = {
@@ -5161,6 +5176,7 @@ static const struct mv88e6xxx_ops mv88e6320_ops = {
 	.avb_ops = &mv88e6352_avb_ops,
 	.ptp_ops = &mv88e6352_ptp_ops,
 	.phylink_get_caps = mv88e632x_phylink_get_caps,
+	.tc_ops = &mv88e6352_tc_ops,
 };
 
 static const struct mv88e6xxx_ops mv88e6321_ops = {
@@ -5209,6 +5225,7 @@ static const struct mv88e6xxx_ops mv88e6321_ops = {
 	.avb_ops = &mv88e6352_avb_ops,
 	.ptp_ops = &mv88e6352_ptp_ops,
 	.phylink_get_caps = mv88e632x_phylink_get_caps,
+	.tc_ops = &mv88e6352_tc_ops,
 };
 
 static const struct mv88e6xxx_ops mv88e6341_ops = {
@@ -5274,6 +5291,7 @@ static const struct mv88e6xxx_ops mv88e6341_ops = {
 	.serdes_get_regs = mv88e6390_serdes_get_regs,
 	.phylink_get_caps = mv88e6341_phylink_get_caps,
 	.pcs_ops = &mv88e6390_pcs_ops,
+	.tc_ops = &mv88e6341_tc_ops,
 };
 
 static const struct mv88e6xxx_ops mv88e6350_ops = {
@@ -5368,6 +5386,7 @@ static const struct mv88e6xxx_ops mv88e6351_ops = {
 	.avb_ops = &mv88e6352_avb_ops,
 	.ptp_ops = &mv88e6352_ptp_ops,
 	.phylink_get_caps = mv88e6351_phylink_get_caps,
+	.tc_ops = &mv88e6352_tc_ops,
 };
 
 static const struct mv88e6xxx_ops mv88e6352_ops = {
@@ -5431,6 +5450,7 @@ static const struct mv88e6xxx_ops mv88e6352_ops = {
 	.serdes_set_tx_amplitude = mv88e6352_serdes_set_tx_amplitude,
 	.phylink_get_caps = mv88e6352_phylink_get_caps,
 	.pcs_ops = &mv88e6352_pcs_ops,
+	.tc_ops = &mv88e6352_tc_ops,
 };
 
 static const struct mv88e6xxx_ops mv88e6390_ops = {
@@ -5495,6 +5515,7 @@ static const struct mv88e6xxx_ops mv88e6390_ops = {
 	.serdes_get_regs = mv88e6390_serdes_get_regs,
 	.phylink_get_caps = mv88e6390_phylink_get_caps,
 	.pcs_ops = &mv88e6390_pcs_ops,
+	.tc_ops = &mv88e6390_tc_ops,
 };
 
 static const struct mv88e6xxx_ops mv88e6390x_ops = {
@@ -5559,6 +5580,7 @@ static const struct mv88e6xxx_ops mv88e6390x_ops = {
 	.ptp_ops = &mv88e6390_ptp_ops,
 	.phylink_get_caps = mv88e6390x_phylink_get_caps,
 	.pcs_ops = &mv88e6390_pcs_ops,
+	.tc_ops = &mv88e6390_tc_ops,
 };
 
 static const struct mv88e6xxx_ops mv88e6393x_ops = {
@@ -5622,6 +5644,7 @@ static const struct mv88e6xxx_ops mv88e6393x_ops = {
 	.ptp_ops = &mv88e6352_ptp_ops,
 	.phylink_get_caps = mv88e6393x_phylink_get_caps,
 	.pcs_ops = &mv88e6393x_pcs_ops,
+	.tc_ops = &mv88e6390_tc_ops,
 };
 
 static const struct mv88e6xxx_info mv88e6xxx_table[] = {
@@ -6603,11 +6626,18 @@ static int mv88e6xxx_port_mdb_add(struct dsa_switch *ds, int port,
 				  struct dsa_db db)
 {
 	struct mv88e6xxx_chip *chip = ds->priv;
+	u8 state;
 	int err;
 
+#ifdef CONFIG_NET_DSA_MV88E6XXX_SRP
+	if (chip->avb_tc_policy.port_mask & BIT(port))
+		state = MV88E6XXX_G1_ATU_DATA_STATE_MC_STATIC_AVB_NRL;
+	else
+#endif
+		state = MV88E6XXX_G1_ATU_DATA_STATE_MC_STATIC;
+
 	mv88e6xxx_reg_lock(chip);
-	err = mv88e6xxx_port_db_load_purge(chip, port, mdb->addr, mdb->vid,
-					   MV88E6XXX_G1_ATU_DATA_STATE_MC_STATIC);
+	err = mv88e6xxx_port_db_load_purge(chip, port, mdb->addr, mdb->vid, state);
 	mv88e6xxx_reg_unlock(chip);
 
 	return err;
@@ -6694,6 +6724,193 @@ static void mv88e6xxx_port_mirror_del(struct dsa_switch *ds, int port,
 	}
 
 	mutex_unlock(&chip->reg_lock);
+}
+
+static int mv88e6xxx_qos_query_caps(struct tc_query_caps_base *base)
+{
+	switch (base->type) {
+	case TC_SETUP_QDISC_MQPRIO: {
+		struct tc_mqprio_caps *caps = base->caps;
+
+		caps->validate_queue_counts = true;
+
+		return 0;
+	}
+	default:
+		return -EOPNOTSUPP;
+	}
+}
+
+static int mv88e6xxx_qos_validate_mqprio(const struct device *dev,
+					 const struct mv88e6xxx_chip *chip,
+					 int port,
+					 const struct tc_mqprio_qopt_offload *mqprio,
+					 struct mv88e6xxx_avb_tc_policy *tcpol)
+{
+	const struct tc_mqprio_qopt *qopt = &mqprio->qopt;
+	struct netlink_ext_ack *extack = mqprio->extack;
+	u8 avb_tcpol_set = 0;
+	int tc, pri;
+
+	memset(tcpol, 0, sizeof(*tcpol));
+
+	if (qopt->hw != TC_MQPRIO_HW_OFFLOAD_TCS) {
+		NL_SET_ERR_MSG(extack, "only full TC hardware offload is supported");
+		return -EOPNOTSUPP;
+	} else if (mqprio->shaper != TC_MQPRIO_SHAPER_DCB) {
+		NL_SET_ERR_MSG(extack, "only DCB shaper is supported");
+		return -EOPNOTSUPP;
+	} else if (qopt->num_tc > MV88E6XXX_AVB_TC_MAX + 1) {
+		NL_SET_ERR_MSG_FMT(extack, "too many traffic classes: %d", qopt->num_tc);
+		return -EOPNOTSUPP;
+	}
+
+	if (qopt->num_tc == 0)
+		return 0;
+
+	/* Validate and map TC to TX queue */
+	for (tc = MV88E6XXX_AVB_TC_LEGACY; tc < qopt->num_tc; tc++) {
+		if (qopt->offset[tc] + qopt->count[tc] > chip->info->num_tx_queues) {
+			NL_SET_ERR_MSG_FMT(extack, "queue %d out of range",
+					   qopt->offset[tc] + qopt->count[tc] - 1);
+			return -EOPNOTSUPP;
+		}
+
+		if (tc == MV88E6XXX_AVB_TC_LEGACY) {
+			tcpol->map[tc].count = qopt->count[tc];
+		} else if (qopt->count[tc] != 1) {
+			NL_SET_ERR_MSG_FMT(extack, "only one queue supported for TC %d", tc);
+			return -EOPNOTSUPP;
+		}
+
+		tcpol->map[tc].qpri = qopt->offset[tc];
+	}
+
+	/* Validate and map priority to TC */
+	for (pri = 0; pri < IEEE_8021Q_MAX_PRIORITIES; pri++) {
+		tc = qopt->prio_tc_map[pri];
+
+		if (tc == MV88E6XXX_AVB_TC_LEGACY)
+			continue;
+
+		if (avb_tcpol_set & BIT(tc)) {
+			NL_SET_ERR_MSG_FMT(extack,
+					   "only one frame priority can be mapped to TC %d", tc);
+			return -EOPNOTSUPP;
+		}
+
+		avb_tcpol_set |= BIT(tc);
+		tcpol->map[tc].fpri = pri;
+	}
+
+	if (avb_tcpol_set != GENMASK(MV88E6XXX_AVB_TC_HI, MV88E6XXX_AVB_TC_LO)) {
+		NL_SET_ERR_MSG(extack,
+			       "both hi and lo priority TCs must have 802.1p priorities");
+		return -EOPNOTSUPP;
+	}
+
+	return qopt->num_tc;
+}
+
+static int mv88e6xxx_qos_port_mqprio(struct dsa_switch *ds, int port,
+				     struct tc_mqprio_qopt_offload *mqprio)
+{
+	struct netlink_ext_ack *extack = mqprio->extack;
+	struct mv88e6xxx_avb_tc_policy tcpol;
+	struct mv88e6xxx_chip *chip = ds->priv;
+	struct net_device *user;
+	int err, num_tc, tc;
+	bool can_update_pol;
+
+	if (!dsa_is_user_port(ds, port))
+		return -EINVAL;
+
+	num_tc = mv88e6xxx_qos_validate_mqprio(ds->dev, chip, port, mqprio, &tcpol);
+	if (num_tc < 0)
+		return num_tc;
+
+	/* Update the kernel's view of the priority mapping policy, then update the
+	 * switch's.
+	 */
+	user = dsa_to_port(ds, port)->user;
+
+	err = netdev_set_num_tc(user, num_tc);
+	if (err)
+		goto err_reset_tc;
+
+	for (tc = 0; tc < num_tc; tc++) {
+		const struct tc_mqprio_qopt *qopt = &mqprio->qopt;
+
+		err = netdev_set_tc_queue(user, tc, 1, qopt->offset[tc]);
+		if (err)
+			goto err_reset_tc;
+	}
+
+	mutex_lock(&chip->reg_lock);
+
+	/* Update the actual priority mapping policy iff no policy has been set or the
+	 * only referant is the requesting port. Silently allow matching updates from
+	 * other ports. All other updates are rejected with -EOPNOTSUPP.
+	 */
+	can_update_pol = chip->avb_tc_policy.port_mask == 0 ||
+			 (hweight16(chip->avb_tc_policy.port_mask) == 1 &&
+			  ffs(chip->avb_tc_policy.port_mask) == port);
+
+	if (!can_update_pol &&
+	    num_tc > 0 &&
+	    memcmp(&tcpol.map, &chip->avb_tc_policy.map, sizeof(tcpol.map)) != 0) {
+		NL_SET_ERR_MSG(extack, "only a single AVB queue policy is supported per switch");
+		err = -EOPNOTSUPP;
+		goto err_unlock;
+	}
+
+	if (can_update_pol) {
+		err = num_tc > 0 ? mv88e6xxx_avb_tc_enable(chip, &tcpol)
+				 : mv88e6xxx_avb_tc_disable(chip);
+		if (err) {
+			NL_SET_ERR_MSG_FMT(extack, "failed to %s AVB queue policy: %d",
+					   num_tc > 0 ? "enable" : "disable", err);
+			goto err_unlock;
+		}
+
+		memcpy(&chip->avb_tc_policy.map, &tcpol.map, sizeof(tcpol.map));
+	}
+
+	if (num_tc)
+		chip->avb_tc_policy.port_mask |= BIT(port);
+	else
+		chip->avb_tc_policy.port_mask &= ~BIT(port);
+
+	mutex_unlock(&chip->reg_lock);
+
+	return 0;
+
+err_unlock:
+	mutex_unlock(&chip->reg_lock);
+
+err_reset_tc:
+	netdev_reset_tc(user);
+
+	return err;
+}
+
+static int mv88e6xxx_port_setup_tc(struct dsa_switch *ds, int port,
+				   enum tc_setup_type type,
+				   void *type_data)
+{
+	struct mv88e6xxx_chip *chip = ds->priv;
+
+	if (!chip->info->ops->tc_ops)
+		return -EOPNOTSUPP;
+
+	switch (type) {
+	case TC_QUERY_CAPS:
+		return mv88e6xxx_qos_query_caps(type_data);
+	case TC_SETUP_QDISC_MQPRIO:
+		return mv88e6xxx_qos_port_mqprio(ds, port, type_data);
+	default:
+		return -EOPNOTSUPP;
+	}
 }
 
 static int mv88e6xxx_port_pre_bridge_flags(struct dsa_switch *ds, int port,
@@ -7115,6 +7332,7 @@ static const struct dsa_switch_ops mv88e6xxx_switch_ops = {
 	.port_mdb_del		= mv88e6xxx_port_mdb_del,
 	.port_mirror_add	= mv88e6xxx_port_mirror_add,
 	.port_mirror_del	= mv88e6xxx_port_mirror_del,
+	.port_setup_tc		= mv88e6xxx_port_setup_tc,
 	.crosschip_bridge_join	= mv88e6xxx_crosschip_bridge_join,
 	.crosschip_bridge_leave	= mv88e6xxx_crosschip_bridge_leave,
 	.port_hwtstamp_set	= mv88e6xxx_port_hwtstamp_set,
