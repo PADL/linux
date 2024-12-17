@@ -5004,6 +5004,7 @@ static const struct mv88e6xxx_ops mv88e6240_ops = {
 	.port_set_ether_type = mv88e6351_port_set_ether_type,
 	.port_set_jumbo_size = mv88e6165_port_set_jumbo_size,
 	.port_egress_rate_limiting = mv88e6097_port_egress_rate_limiting,
+	.port_set_scheduling_mode = mv88e6352_port_set_scheduling_mode,
 	.port_pause_limit = mv88e6097_port_pause_limit,
 	.port_disable_learn_limit = mv88e6xxx_port_disable_learn_limit,
 	.port_disable_pri_override = mv88e6xxx_port_disable_pri_override,
@@ -5441,6 +5442,7 @@ static const struct mv88e6xxx_ops mv88e6352_ops = {
 	.port_set_ether_type = mv88e6351_port_set_ether_type,
 	.port_set_jumbo_size = mv88e6165_port_set_jumbo_size,
 	.port_egress_rate_limiting = mv88e6097_port_egress_rate_limiting,
+	.port_set_scheduling_mode = mv88e6352_port_set_scheduling_mode,
 	.port_pause_limit = mv88e6097_port_pause_limit,
 	.port_disable_learn_limit = mv88e6xxx_port_disable_learn_limit,
 	.port_disable_pri_override = mv88e6xxx_port_disable_pri_override,
@@ -5505,6 +5507,7 @@ static const struct mv88e6xxx_ops mv88e6390_ops = {
 	.port_set_ether_type = mv88e6351_port_set_ether_type,
 	.port_set_jumbo_size = mv88e6165_port_set_jumbo_size,
 	.port_egress_rate_limiting = mv88e6097_port_egress_rate_limiting,
+	.port_set_scheduling_mode = mv88e6390_port_set_scheduling_mode,
 	.port_pause_limit = mv88e6390_port_pause_limit,
 	.port_disable_learn_limit = mv88e6xxx_port_disable_learn_limit,
 	.port_disable_pri_override = mv88e6xxx_port_disable_pri_override,
@@ -5570,6 +5573,7 @@ static const struct mv88e6xxx_ops mv88e6390x_ops = {
 	.port_set_ether_type = mv88e6351_port_set_ether_type,
 	.port_set_jumbo_size = mv88e6165_port_set_jumbo_size,
 	.port_egress_rate_limiting = mv88e6097_port_egress_rate_limiting,
+	.port_set_scheduling_mode = mv88e6390_port_set_scheduling_mode,
 	.port_pause_limit = mv88e6390_port_pause_limit,
 	.port_disable_learn_limit = mv88e6xxx_port_disable_learn_limit,
 	.port_disable_pri_override = mv88e6xxx_port_disable_pri_override,
@@ -5634,6 +5638,7 @@ static const struct mv88e6xxx_ops mv88e6393x_ops = {
 	.port_set_ether_type = mv88e6393x_port_set_ether_type,
 	.port_set_jumbo_size = mv88e6165_port_set_jumbo_size,
 	.port_egress_rate_limiting = mv88e6097_port_egress_rate_limiting,
+	.port_set_scheduling_mode = mv88e6390_port_set_scheduling_mode,
 	.port_pause_limit = mv88e6390_port_pause_limit,
 	.port_disable_learn_limit = mv88e6xxx_port_disable_learn_limit,
 	.port_disable_pri_override = mv88e6xxx_port_disable_pri_override,
@@ -5673,6 +5678,19 @@ static const struct mv88e6xxx_ops mv88e6393x_ops = {
 	.phylink_get_caps = mv88e6393x_phylink_get_caps,
 	.pcs_ops = &mv88e6393x_pcs_ops,
 	.tc_ops = &mv88e6390_tc_ops,
+};
+
+static const struct mv88e6xxx_qav_info mv88e6352_qav_info = {
+	.rate_unit = 32,
+	.rate_mask = GENMASK(14, 0),
+	.hi_limit_mask = GENMASK(14, 0),
+};
+
+/* The 6341 family shares the 6390-family rate-shaper encoding. */
+static const struct mv88e6xxx_qav_info mv88e6390_qav_info = {
+	.rate_unit = 64,
+	.rate_mask = GENMASK(15, 0),
+	.hi_limit_mask = GENMASK(13, 0),
 };
 
 static const struct mv88e6xxx_info mv88e6xxx_table[] = {
@@ -5889,6 +5907,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.edsa_support = MV88E6XXX_EDSA_SUPPORTED,
 		.ptp_support = true,
 		.num_tx_queues = 4,
+		.qav = &mv88e6352_qav_info,
 		.ops = &mv88e6161_ops,
 	},
 
@@ -5915,6 +5934,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.multi_chip = true,
 		.ptp_support = true,
 		.num_tx_queues = 4,
+		.qav = &mv88e6352_qav_info,
 		.ops = &mv88e6165_ops,
 	},
 
@@ -6119,6 +6139,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.multi_chip = true,
 		.ptp_support = true,
 		.num_tx_queues = 4,
+		.qav = &mv88e6352_qav_info,
 		.ops = &mv88e6191_ops,
 	},
 
@@ -6145,6 +6166,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.multi_chip = true,
 		.ptp_support = true,
 		.num_tx_queues = 8,
+		.qav = &mv88e6390_qav_info,
 		.ops = &mv88e6393x_ops,
 	},
 
@@ -6171,6 +6193,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.multi_chip = true,
 		.ptp_support = true,
 		.num_tx_queues = 8,
+		.qav = &mv88e6390_qav_info,
 		.ops = &mv88e6393x_ops,
 	},
 
@@ -6226,6 +6249,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.edsa_support = MV88E6XXX_EDSA_SUPPORTED,
 		.ptp_support = true,
 		.num_tx_queues = 4,
+		.qav = &mv88e6352_qav_info,
 		.ops = &mv88e6240_ops,
 	},
 
@@ -6274,6 +6298,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.multi_chip = true,
 		.ptp_support = true,
 		.num_tx_queues = 8,
+		.qav = &mv88e6390_qav_info,
 		.ops = &mv88e6290_ops,
 	},
 
@@ -6303,6 +6328,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.edsa_support = MV88E6XXX_EDSA_SUPPORTED,
 		.ptp_support = true,
 		.num_tx_queues = 4,
+		.qav = &mv88e6352_qav_info,
 		.ops = &mv88e6320_ops,
 	},
 
@@ -6332,6 +6358,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.edsa_support = MV88E6XXX_EDSA_SUPPORTED,
 		.ptp_support = true,
 		.num_tx_queues = 4,
+		.qav = &mv88e6352_qav_info,
 		.ops = &mv88e6321_ops,
 	},
 
@@ -6360,6 +6387,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.edsa_support = MV88E6XXX_EDSA_SUPPORTED,
 		.ptp_support = true,
 		.num_tx_queues = 4,
+		.qav = &mv88e6390_qav_info,
 		.ops = &mv88e6341_ops,
 	},
 
@@ -6411,6 +6439,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.multi_chip = true,
 		.edsa_support = MV88E6XXX_EDSA_SUPPORTED,
 		.num_tx_queues = 4,
+		.qav = &mv88e6352_qav_info,
 		.ops = &mv88e6351_ops,
 	},
 
@@ -6439,6 +6468,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.edsa_support = MV88E6XXX_EDSA_SUPPORTED,
 		.ptp_support = true,
 		.num_tx_queues = 4,
+		.qav = &mv88e6352_qav_info,
 		.ops = &mv88e6352_ops,
 	},
 	[MV88E6361] = {
@@ -6467,6 +6497,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.multi_chip = true,
 		.ptp_support = true,
 		.num_tx_queues = 8,
+		.qav = &mv88e6390_qav_info,
 		.ops = &mv88e6393x_ops,
 	},
 	[MV88E6390] = {
@@ -6494,6 +6525,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.edsa_support = MV88E6XXX_EDSA_UNDOCUMENTED,
 		.ptp_support = true,
 		.num_tx_queues = 8,
+		.qav = &mv88e6390_qav_info,
 		.ops = &mv88e6390_ops,
 	},
 	[MV88E6390X] = {
@@ -6521,6 +6553,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.edsa_support = MV88E6XXX_EDSA_UNDOCUMENTED,
 		.ptp_support = true,
 		.num_tx_queues = 8,
+		.qav = &mv88e6390_qav_info,
 		.ops = &mv88e6390x_ops,
 	},
 
@@ -6547,6 +6580,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.multi_chip = true,
 		.ptp_support = true,
 		.num_tx_queues = 8,
+		.qav = &mv88e6390_qav_info,
 		.ops = &mv88e6393x_ops,
 	},
 };
@@ -7002,6 +7036,43 @@ err_unlock:
 	return err;
 }
 
+static int mv88e6xxx_qos_port_cbs_set(struct dsa_switch *ds, int port,
+				      struct tc_cbs_qopt_offload *cbs_qopt)
+{
+	struct mv88e6xxx_chip *chip = ds->priv;
+	int err;
+
+	if (!dsa_is_user_port(ds, port))
+		return -EINVAL;
+
+	if (cbs_qopt->queue >= chip->info->num_tx_queues) {
+		dev_err(ds->dev, "p%d: invalid AVB queue %d\n", port, cbs_qopt->queue);
+		return -EINVAL;
+	}
+
+	mutex_lock(&chip->reg_lock);
+
+	if (cbs_qopt->enable &&
+	    !(chip->avb_tc_policy.port_mask & BIT(port))) {
+		err = -EOPNOTSUPP;
+		goto out;
+	}
+
+	err = mv88e6xxx_qav_set_port_cbs_qopt(chip, port, cbs_qopt);
+	if (!err)
+		err = mv88e6xxx_avb_set_port_avb_mode(chip, port, cbs_qopt->enable);
+
+out:
+	mutex_unlock(&chip->reg_lock);
+
+	if (err) {
+		dev_info(ds->dev, "p%d: failed to %s AVB CBS policy: %d\n",
+			 port, cbs_qopt->enable ? "enable" : "disable", err);
+	}
+
+	return err;
+}
+
 static int mv88e6xxx_port_setup_tc(struct dsa_switch *ds, int port,
 				   enum tc_setup_type type,
 				   void *type_data)
@@ -7016,6 +7087,8 @@ static int mv88e6xxx_port_setup_tc(struct dsa_switch *ds, int port,
 		return mv88e6xxx_qos_query_caps(type_data);
 	case TC_SETUP_QDISC_MQPRIO:
 		return mv88e6xxx_qos_port_mqprio(ds, port, type_data);
+	case TC_SETUP_QDISC_CBS:
+		return mv88e6xxx_qos_port_cbs_set(ds, port, type_data);
 	default:
 		return -EOPNOTSUPP;
 	}
