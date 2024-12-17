@@ -3919,6 +3919,8 @@ static int mv88e6xxx_setup(struct dsa_switch *ds)
 			goto unlock;
 	}
 
+	ds->num_tx_queues = chip->info->num_tx_queues;
+
 	err = mv88e6xxx_stats_setup(chip);
 	if (err)
 		goto unlock;
@@ -5661,6 +5663,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.pvt = true,
 		.multi_chip = true,
 		.edsa_support = MV88E6XXX_EDSA_SUPPORTED,
+		.num_tx_queues = 4,
 		.ops = &mv88e6141_ops,
 	},
 
@@ -5759,6 +5762,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.pvt = true,
 		.multi_chip = true,
 		.edsa_support = MV88E6XXX_EDSA_SUPPORTED,
+		.num_tx_queues = 4,
 		.ops = &mv88e6172_ops,
 	},
 
@@ -5808,6 +5812,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.pvt = true,
 		.multi_chip = true,
 		.edsa_support = MV88E6XXX_EDSA_SUPPORTED,
+		.num_tx_queues = 4,
 		.ops = &mv88e6176_ops,
 	},
 
@@ -5853,6 +5858,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.pvt = true,
 		.multi_chip = true,
 		.atu_move_port_mask = 0x1f,
+		.num_tx_queues = 8,
 		.ops = &mv88e6190_ops,
 	},
 
@@ -5877,6 +5883,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.atu_move_port_mask = 0x1f,
 		.pvt = true,
 		.multi_chip = true,
+		.num_tx_queues = 8,
 		.ops = &mv88e6190x_ops,
 	},
 
@@ -6001,6 +6008,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.multi_chip = true,
 		.edsa_support = MV88E6XXX_EDSA_SUPPORTED,
 		.ptp_support = true,
+		.num_tx_queues = 4,
 		.ops = &mv88e6240_ops,
 	},
 
@@ -6046,6 +6054,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.pvt = true,
 		.multi_chip = true,
 		.ptp_support = true,
+		.num_tx_queues = 8,
 		.ops = &mv88e6290_ops,
 	},
 
@@ -6071,6 +6080,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.multi_chip = true,
 		.edsa_support = MV88E6XXX_EDSA_SUPPORTED,
 		.ptp_support = true,
+		.num_tx_queues = 4,
 		.ops = &mv88e6320_ops,
 	},
 
@@ -6095,6 +6105,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.multi_chip = true,
 		.edsa_support = MV88E6XXX_EDSA_SUPPORTED,
 		.ptp_support = true,
+		.num_tx_queues = 4,
 		.ops = &mv88e6321_ops,
 	},
 
@@ -6121,6 +6132,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.multi_chip = true,
 		.edsa_support = MV88E6XXX_EDSA_SUPPORTED,
 		.ptp_support = true,
+		.num_tx_queues = 4,
 		.ops = &mv88e6341_ops,
 	},
 
@@ -6195,6 +6207,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.multi_chip = true,
 		.edsa_support = MV88E6XXX_EDSA_SUPPORTED,
 		.ptp_support = true,
+		.num_tx_queues = 4,
 		.ops = &mv88e6352_ops,
 	},
 	[MV88E6361] = {
@@ -6246,6 +6259,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.multi_chip = true,
 		.edsa_support = MV88E6XXX_EDSA_UNDOCUMENTED,
 		.ptp_support = true,
+		.num_tx_queues = 8,
 		.ops = &mv88e6390_ops,
 	},
 	[MV88E6390X] = {
@@ -6271,6 +6285,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.multi_chip = true,
 		.edsa_support = MV88E6XXX_EDSA_UNDOCUMENTED,
 		.ptp_support = true,
+		.num_tx_queues = 8,
 		.ops = &mv88e6390x_ops,
 	},
 
