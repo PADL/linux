@@ -113,6 +113,7 @@
 #define MV88E6XXX_G1_ATU_CTL		0x0a
 #define MV88E6XXX_G1_ATU_CTL_LEARNAVB	0x0004
 #define MV88E6XXX_G1_ATU_CTL_LEARN2ALL	0x0008
+#define MV88E6XXX_G1_ATU_CTL_MAC_AVB	0x8000
 #define MV88E6161_G1_ATU_CTL_HASH_MASK	0x0003
 
 /* Offset 0x0B: ATU Operation Register */
@@ -324,6 +325,7 @@ int mv88e6xxx_g1_set_device_number(struct mv88e6xxx_chip *chip, int index);
 
 int mv88e6xxx_g1_atu_set_learn2all(struct mv88e6xxx_chip *chip, bool learn2all);
 int mv88e6xxx_g1_atu_set_learnavb(struct mv88e6xxx_chip *chip, bool learnavb);
+int mv88e6xxx_g1_atu_set_mac_avb(struct mv88e6xxx_chip *chip, bool mac_avb);
 int mv88e6xxx_g1_atu_set_age_time(struct mv88e6xxx_chip *chip,
 				  unsigned int msecs);
 int mv88e6xxx_g1_atu_getnext(struct mv88e6xxx_chip *chip, u16 fid,
