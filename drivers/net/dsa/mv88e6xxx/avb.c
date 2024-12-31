@@ -184,7 +184,7 @@ static int mv88e6xxx_avb_set_port_avb_mode(struct mv88e6xxx_chip *chip,
 	u16 cfg;
 
 	if (enable) {
-#ifdef CONFIG_NET_DSA_MV88E6XXX_SRP
+#if 0 // ifdef CONFIG_NET_DSA_MV88E6XXX_SRP
 		/* Require static FDB/MDB entries to admit streams */
 		cfg = MV88E6XXX_PORT_AVB_CFG_AVB_MODE_ENHANCED |
 			MV88E6XXX_PORT_AVB_CFG_AVB_FILTER_BAD_AVB |
