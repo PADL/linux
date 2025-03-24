@@ -6693,7 +6693,7 @@ static int mv88e6xxx_qos_port_mqprio(struct dsa_switch *ds, int port,
 	/* Update the kernel's view of the priority mapping policy, then update the
 	 * switch's.
 	 */
-	user = dsa_to_port(ds, port)->user;
+	user = dsa_to_port(ds, port)->slave;
 
 	err = netdev_set_num_tc(user, num_tc);
 	if (err)
