@@ -13,8 +13,6 @@
 #include "global2.h"
 #include "port.h"
 
-#ifdef CONFIG_NET_DSA_MV88E6XXX_SRP
-
 /* AVB operation wrappers */
 
 static int mv88e6xxx_port_avb_read(struct mv88e6xxx_chip *chip, int port,
@@ -36,6 +34,7 @@ static int mv88e6xxx_port_avb_write(struct mv88e6xxx_chip *chip, int port,
 	return chip->info->ops->avb_ops->port_avb_write(chip, port, addr, data);
 }
 
+#ifdef CONFIG_NET_DSA_MV88E6XXX_SRP
 static int mv88e6xxx_avb_read(struct mv88e6xxx_chip *chip, int addr,
 			      u16 *data, int len)
 {
