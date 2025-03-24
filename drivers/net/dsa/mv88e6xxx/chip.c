@@ -11,6 +11,7 @@
  */
 
 #include <linux/bitfield.h>
+#include <linux/dcbnl.h>
 #include <linux/delay.h>
 #include <linux/dsa/mv88e6xxx.h>
 #include <linux/etherdevice.h>

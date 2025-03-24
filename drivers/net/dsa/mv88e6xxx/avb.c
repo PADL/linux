@@ -7,6 +7,8 @@
  * Copyright (c) 2024 PADL Software Pty Ltd
  */
 
+#include <linux/dcbnl.h> /* for IEEE_8021Q_MAX_PRIORITIES */
+
 #include "avb.h"
 #include "chip.h"
 #include "global1.h"
