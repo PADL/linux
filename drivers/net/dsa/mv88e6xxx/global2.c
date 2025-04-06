@@ -855,6 +855,7 @@ static void mv88e6097_watchdog_free(struct mv88e6xxx_chip *chip)
 static int mv88e6097_watchdog_setup(struct mv88e6xxx_chip *chip)
 {
 	return mv88e6xxx_g2_write(chip, MV88E6352_G2_WDOG_CTL,
+				  MV88E6352_G2_WDOG_CTL_RMU_TIMEOUT |
 				  MV88E6352_G2_WDOG_CTL_EGRESS_ENABLE |
 				  MV88E6352_G2_WDOG_CTL_QC_ENABLE |
 				  MV88E6352_G2_WDOG_CTL_SWRESET);
