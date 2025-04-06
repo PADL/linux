@@ -163,6 +163,7 @@ static int mv88e6xxx_qav_set_iso_ptr(struct mv88e6xxx_chip *chip, u16 threshold)
 
 	data &= ~(MV88E6XXX_QAV_CFG_GLOBAL_ISO_PTR_MASK);
 	data |= MV88E6XXX_QAV_CFG_GLOBAL_ISO_PTR_SET(threshold);
+	data |= MV88E6XXX_QAV_CFG_ADMIT_MGMT; /* in case RMU being used */
 
 	err = mv88e6xxx_qav_write(chip, MV88E6XXX_QAV_CFG, data);
 	if (err)
