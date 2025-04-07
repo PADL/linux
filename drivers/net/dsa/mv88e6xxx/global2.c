@@ -29,8 +29,14 @@ int mv88e6xxx_g2_write(struct mv88e6xxx_chip *chip, int reg, u16 val)
 int mv88e6xxx_g2_wait_bit(struct mv88e6xxx_chip *chip, int reg, int
 			  bit, int val)
 {
-	return mv88e6xxx_wait_bit(chip, chip->info->global2_addr, reg,
-				  bit, val);
+	int err;
+
+	err = mv88e6xxx_wait_bit(chip, chip->info->global2_addr, reg, bit, val);
+	if (err == 0 && reg == MV88E6XXX_G2_SMI_PHY_CMD &&
+	    chip->rmu_state != MV88E6XXX_RMU_DISABLED)
+		usleep_range(500, 1000);
+
+	return err;
 }
 
 /* Offset 0x00: Interrupt Source Register */
