@@ -408,6 +408,10 @@ out_err_ethtool_teardown:
 	dsa_conduit_ethtool_teardown(dev);
 out_err_reset_promisc:
 	dsa_conduit_set_promiscuity(dev, -1);
+
+	dev->dsa_ptr = NULL;
+	wmb();
+
 	return ret;
 }
 
