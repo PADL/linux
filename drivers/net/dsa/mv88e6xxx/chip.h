@@ -394,10 +394,7 @@ struct mv88e6xxx_tcam {
 enum mv88e6xxx_rmu_state {
 	MV88E6XXX_RMU_DISABLED = 0,
 	MV88E6XXX_RMU_ENABLED = 1,
-	/* Reserved: a future RMU-only mode (e.g. MV88E6XXX_RMU_ONLY_ENABLED)
-	 * may be added here to indicate a switch operating purely via RMU
-	 * without an MDIO bus.
-	 */
+	MV88E6XXX_RMU_ONLY_ENABLED = 2,
 };
 
 #define MV88E6XXX_RMU_IS_SLOW	BIT(0)
@@ -1031,5 +1028,11 @@ int mv88e6xxx_vtu_walk(struct mv88e6xxx_chip *chip,
 size_t mv88e6xxx_stats_get_stat(struct mv88e6xxx_chip *chip, int port,
 				const struct mv88e6xxx_hw_stat *stat,
 				uint64_t *data);
+
+bool mv88e6xxx_rmu_disabled(void);
+
+int mv88e6xxx_detect(struct mv88e6xxx_chip *chip);
+
+int mv88e6xxx_register_switch(struct mv88e6xxx_chip *chip);
 
 #endif /* _MV88E6XXX_CHIP_H */
