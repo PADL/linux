@@ -2648,10 +2648,9 @@ static void dsa_user_get_stats64(struct net_device *dev,
 				 struct rtnl_link_stats64 *s)
 {
 	struct dsa_port *dp = dsa_user_to_port(dev);
-	struct dsa_switch *ds = dp->ds;
 
-	if (ds->ops->get_stats64)
-		ds->ops->get_stats64(ds, dp->index, s);
+	if (dp && dp->ds->ops->get_stats64)
+		dp->ds->ops->get_stats64(dp->ds, dp->index, s);
 	else
 		dev_get_tstats64(dev, s);
 }
@@ -3665,6 +3664,8 @@ static int dsa_user_netdevice_event(struct notifier_block *nb,
 	}
 	case NETDEV_CHANGE:
 	case NETDEV_UP: {
+		dsa_inband_conduit_event(dev);
+
 		/* Track state of conduit port.
 		 * DSA driver may require the conduit port (and indirectly
 		 * the tagger) to be available for some special operation.
