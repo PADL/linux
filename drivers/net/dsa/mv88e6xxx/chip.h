@@ -384,6 +384,14 @@ struct mv88e6xxx_hw_stat {
 	int type;
 };
 
+enum mv88e6xxx_rmu_state {
+	MV88E6XXX_RMU_DISABLED = 0,
+	MV88E6XXX_RMU_ENABLED = 1,
+	MV88E6XXX_RMU_ONLY_ENABLED = 2,
+};
+
+#define MV88E6XXX_RMU_IS_SLOW	BIT(0)
+
 struct mv88e6xxx_chip {
 	const struct mv88e6xxx_info *info;
 
@@ -496,13 +504,13 @@ struct mv88e6xxx_chip {
 	DECLARE_BITMAP(fid_bitmap, MV88E6XXX_N_FID);
 
 	/* Remote Management Unit state. */
-	struct net_device *rmu_master;
+	struct net_device *rmu_conduit;
 	struct dsa_inband rmu_inband;
-	bool rmu_enabled;
-	ktime_t rmu_read_latancies[16];
+	enum mv88e6xxx_rmu_state rmu_state;
+	u8 rmu_flags;
+	ktime_t rmu_read_latencies[16];
 	u32 rmu_samples;
-	ktime_t smi_read_latancy;
-	bool rmu_is_slow;
+	ktime_t smi_read_latency;
 };
 
 struct mv88e6xxx_bus_ops {
@@ -939,5 +947,11 @@ int mv88e6xxx_vtu_walk(struct mv88e6xxx_chip *chip,
 size_t mv88e6xxx_stats_get_stat(struct mv88e6xxx_chip *chip, int port,
 				const struct mv88e6xxx_hw_stat *stat,
 				uint64_t *data);
+
+bool mv88e6xxx_rmu_disabled(void);
+
+int mv88e6xxx_detect(struct mv88e6xxx_chip *chip);
+
+int mv88e6xxx_register_switch(struct mv88e6xxx_chip *chip);
 
 #endif /* _MV88E6XXX_CHIP_H */
