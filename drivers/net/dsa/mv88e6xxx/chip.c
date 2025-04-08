@@ -6861,6 +6861,9 @@ static int mv88e6xxx_change_tag_protocol(struct dsa_switch *ds,
 	old_protocol = chip->tag_protocol;
 	chip->tag_protocol = proto;
 
+	if (!ds->setup)
+		return 0;
+
 	mv88e6xxx_reg_lock(chip);
 	dsa_switch_for_each_cpu_port(cpu_dp, ds) {
 		err = mv88e6xxx_setup_port_mode(chip, cpu_dp->index);
