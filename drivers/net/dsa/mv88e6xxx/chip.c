@@ -8,6 +8,8 @@
  *
  * Copyright (c) 2016-2017 Savoir-faire Linux Inc.
  *	Vivien Didelot <vivien.didelot@savoirfairelinux.com>
+ *
+ * Copyright (c) 2024-2025 PADL Software Pty Ltd
  */
 
 #include <linux/bitfield.h>
@@ -27,6 +29,7 @@
 #include <linux/of.h>
 #include <linux/of_irq.h>
 #include <linux/of_mdio.h>
+#include <linux/platform_device.h>
 #include <linux/platform_data/mv88e6xxx.h>
 #include <linux/property.h>
 #include <linux/netdevice.h>
@@ -66,7 +69,7 @@ int mv88e6xxx_read(struct mv88e6xxx_chip *chip, int addr, int reg, u16 *val)
 	assert_reg_lock(chip);
 
 	err = mv88e6xxx_rmu_read(chip, addr, reg, val);
-	if (err == -EOPNOTSUPP || err == -ETIMEDOUT)
+	if (mv88e6xxx_rmu_can_mdio_fallback(chip, err))
 		err = mv88e6xxx_smi_read(chip, addr, reg, val);
 	if (err)
 		return err;
@@ -84,7 +87,7 @@ int mv88e6xxx_write(struct mv88e6xxx_chip *chip, int addr, int reg, u16 val)
 	assert_reg_lock(chip);
 
 	err = mv88e6xxx_rmu_write(chip, addr, reg, val);
-	if (err == -EOPNOTSUPP || err == -ETIMEDOUT)
+	if (mv88e6xxx_rmu_can_mdio_fallback(chip, err))
 		err = mv88e6xxx_smi_write(chip, addr, reg, val);
 	if (err)
 		return err;
@@ -139,7 +142,7 @@ int mv88e6xxx_wait_bit(struct mv88e6xxx_chip *chip, int addr, int reg,
 
 	err = mv88e6xxx_rmu_wait_bit(chip, addr, reg, bit, val);
 
-	if (err == -EOPNOTSUPP || err == -ETIMEDOUT)
+	if (mv88e6xxx_rmu_can_mdio_fallback(chip, err))
 		err = mv88e6xxx_wait_mask(chip, addr, reg, BIT(bit),
 					  val ? BIT(bit) : 0x0000);
 	return err;
@@ -1370,7 +1373,7 @@ static size_t mv88e6xxx_stats_get_stats(struct mv88e6xxx_chip *chip, int port,
 	if (err > 0)
 		return err;
 
-	if (err != -EOPNOTSUPP && err != -ETIMEDOUT)
+	if (!mv88e6xxx_rmu_can_mdio_fallback(chip, err))
 		return err;
 
 	for (i = 0, j = 0; i < ARRAY_SIZE(mv88e6xxx_hw_stats); i++) {
@@ -1627,6 +1630,9 @@ static void mv88e6xxx_port_stp_state_set(struct dsa_switch *ds, int port,
 {
 	struct mv88e6xxx_chip *chip = ds->priv;
 	int err;
+
+	if (mv88e6xxx_is_rmu_only_cpu_port(chip, port))
+		return;
 
 	mv88e6xxx_reg_lock(chip);
 	err = mv88e6xxx_port_set_state(chip, port, state);
@@ -3169,7 +3175,8 @@ static void mv88e6xxx_crosschip_bridge_leave(struct dsa_switch *ds,
 
 static int mv88e6xxx_software_reset(struct mv88e6xxx_chip *chip)
 {
-	if (chip->info->ops->reset)
+	if (chip->rmu_state != MV88E6XXX_RMU_ONLY_ENABLED &&
+	    chip->info->ops->reset)
 		return chip->info->ops->reset(chip);
 
 	return 0;
@@ -3216,6 +3223,9 @@ static int mv88e6xxx_disable_ports(struct mv88e6xxx_chip *chip)
 
 	/* Set all ports to the Disabled state */
 	for (i = 0; i < mv88e6xxx_num_ports(chip); i++) {
+		if (mv88e6xxx_is_rmu_only_cpu_port(chip, i))
+			continue;
+
 		err = mv88e6xxx_port_set_state(chip, i, BR_STATE_DISABLED);
 		if (err)
 			return err;
@@ -3431,11 +3441,13 @@ static int mv88e6xxx_setup_port(struct mv88e6xxx_chip *chip, int port)
 			return err;
 	}
 
-	err = mv88e6xxx_port_setup_mac(chip, port, LINK_UNFORCED,
-				       SPEED_UNFORCED, DUPLEX_UNFORCED,
-				       PAUSE_ON, PHY_INTERFACE_MODE_NA);
-	if (err)
-		return err;
+	if (!mv88e6xxx_is_rmu_only_cpu_port(chip, port)) {
+		err = mv88e6xxx_port_setup_mac(chip, port, LINK_UNFORCED,
+					       SPEED_UNFORCED, DUPLEX_UNFORCED,
+					       PAUSE_ON, PHY_INTERFACE_MODE_NA);
+		if (err)
+			return err;
+	}
 
 	/* Port Control: disable Drop-on-Unlock, disable Drop-on-Lock,
 	 * disable Header mode, enable IGMP/MLD snooping, disable VLAN
@@ -3450,14 +3462,31 @@ static int mv88e6xxx_setup_port(struct mv88e6xxx_chip *chip, int port)
 	 *
 	 * If this is the upstream port for this switch, enable
 	 * forwarding of unknown unicasts and multicasts.
+	 *
+	 * If we are in RMU-only mode, don't clear the existing DSA
+	 * tagging bits, otherwise we will not be able to communicate
+	 * with the switch.
 	 */
-	reg = MV88E6185_PORT_CTL0_USE_TAG | MV88E6185_PORT_CTL0_USE_IP |
+	if (mv88e6xxx_is_rmu_only_cpu_port(chip, port)) {
+		err = mv88e6xxx_port_read(chip, port, MV88E6XXX_PORT_CTL0, &reg);
+		if (err)
+			return err;
+
+		reg &= ~(MV88E6XXX_PORT_CTL0_SA_FILT_MASK |
+			 MV88E6XXX_PORT_CTL0_STATE_FORWARDING |
+			 MV88E6XXX_PORT_CTL0_HEADER);
+	} else {
+		reg = 0;
+	}
+	reg |= MV88E6185_PORT_CTL0_USE_TAG | MV88E6185_PORT_CTL0_USE_IP |
 		MV88E6XXX_PORT_CTL0_STATE_FORWARDING;
 	/* Forward any IPv4 IGMP or IPv6 MLD frames received
 	 * by a USER port to the CPU port to allow snooping.
 	 */
 	if (dsa_is_user_port(ds, port))
 		reg |= MV88E6XXX_PORT_CTL0_IGMP_MLD_SNOOP;
+        if (err)
+                return err;
 
 	err = mv88e6xxx_port_write(chip, port, MV88E6XXX_PORT_CTL0, reg);
 	if (err)
@@ -3916,7 +3945,7 @@ static int mv88e6xxx_mdio_register(struct mv88e6xxx_chip *chip,
 
 	err = of_mdiobus_register(bus, np);
 	if (err) {
-		dev_err(chip->dev, "Cannot register MDIO bus (%d)\n", err);
+		dev_err(chip->dev, "Cannot register device node %s (%d) MDIO bus (%d)\n", np->full_name, np->phandle, err);
 		mv88e6xxx_g2_irq_mdio_free(chip, bus);
 		goto out;
 	}
@@ -4002,11 +4031,23 @@ static int mv88e6xxx_setup(struct dsa_switch *ds)
 	int err;
 	int i;
 
+	chip->ds = ds;
+
+	if (chip->rmu_state == MV88E6XXX_RMU_ONLY_ENABLED) {
+		BUG_ON(chip->rmu_conduit != NULL);
+		BUG_ON(!ds->inband_only);
+
+		chip->rmu_conduit = dsa_tree_find_first_conduit(ds->dst);
+		if (chip->rmu_conduit == NULL) {
+			dev_err(chip->dev, "RMU: unable to find switch conduit device\n");
+			return -ENODEV;
+		}
+	}
+
 	err = mv88e6xxx_mdios_register(chip);
 	if (err)
 		return err;
 
-	chip->ds = ds;
 	ds->user_mii_bus = mv88e6xxx_default_mdio_bus(chip);
 
 	/* Since virtual bridges are mapped in the PVT, the number we support
@@ -6606,7 +6647,7 @@ static const struct mv88e6xxx_info *mv88e6xxx_lookup_info(unsigned int prod_num)
 	return NULL;
 }
 
-static int mv88e6xxx_detect(struct mv88e6xxx_chip *chip)
+int mv88e6xxx_detect(struct mv88e6xxx_chip *chip)
 {
 	const struct mv88e6xxx_info *info;
 	unsigned int prod_num, rev;
@@ -7529,10 +7570,17 @@ static const struct dsa_switch_ops mv88e6xxx_switch_ops = {
 	.connect_tag_protocol	= mv88e6xxx_connect_tag_protocol,
 };
 
-static int mv88e6xxx_register_switch(struct mv88e6xxx_chip *chip)
+int mv88e6xxx_register_switch(struct mv88e6xxx_chip *chip)
 {
 	struct device *dev = chip->dev;
 	struct dsa_switch *ds;
+
+	if (chip->ds) {
+		BUG_ON(!chip->ds->inband_only);
+		return 0;
+	}
+
+	dsa_inband_init(&chip->rmu_inband, U8_MAX);
 
 	ds = devm_kzalloc(dev, sizeof(*ds), GFP_KERNEL);
 	if (!ds)
@@ -7546,6 +7594,12 @@ static int mv88e6xxx_register_switch(struct mv88e6xxx_chip *chip)
 	ds->phylink_mac_ops = &mv88e6xxx_phylink_mac_ops;
 	ds->ageing_time_min = chip->info->age_time_coeff;
 	ds->ageing_time_max = chip->info->age_time_coeff * U8_MAX;
+
+	/* inband_only is a hint to dsa_register_switch() to ensure that the
+	 * conduit device is initialized early so the switch can be brought
+	 * up without MDIO.
+	 */
+	ds->inband_only = chip->rmu_state == MV88E6XXX_RMU_ONLY_ENABLED;
 
 	/* Some chips support up to 32, but that requires enabling the
 	 * 5-bit port mode, which we do not support. 640k^W16 ought to
@@ -7613,11 +7667,39 @@ static int __maybe_unused mv88e6xxx_resume(struct device *dev)
 
 static SIMPLE_DEV_PM_OPS(mv88e6xxx_pm_ops, mv88e6xxx_suspend, mv88e6xxx_resume);
 
-static int mv88e6xxx_probe(struct mdio_device *mdiodev)
+static int mv88e6xxx_detect_mdio(struct mv88e6xxx_chip *chip)
 {
-	struct dsa_mv88e6xxx_pdata *pdata = mdiodev->dev.platform_data;
+	struct mdio_device *mdiodev = (struct mdio_device *)chip->dev;
+	int err;
+
+	/* Detect if the device is configured in single chip addressing mode,
+	 * otherwise continue with address specific smi init/detection.
+	 */
+
+	err = mv88e6xxx_single_chip_detect(chip, mdiodev);
+	if (err) {
+		err = mv88e6xxx_smi_init(chip, mdiodev->bus, mdiodev->addr);
+		if (err)
+			return err;
+
+		err = mv88e6xxx_detect(chip);
+		if (err)
+			return err;
+	}
+
+	if (chip->info->edsa_support == MV88E6XXX_EDSA_SUPPORTED)
+		chip->tag_protocol = DSA_TAG_PROTO_EDSA;
+	else
+		chip->tag_protocol = DSA_TAG_PROTO_DSA;
+
+	return 0;
+}
+
+static int mv88e6xxx_probe_common(struct device *dev,
+				  int (*detect)(struct mv88e6xxx_chip *))
+{
+	struct dsa_mv88e6xxx_pdata *pdata = dev->platform_data;
 	const struct mv88e6xxx_info *compat_info = NULL;
-	struct device *dev = &mdiodev->dev;
 	struct device_node *np = dev->of_node;
 	struct mv88e6xxx_chip *chip;
 	int port;
@@ -7664,24 +7746,9 @@ static int mv88e6xxx_probe(struct mdio_device *mdiodev)
 	if (chip->reset)
 		usleep_range(10000, 20000);
 
-	/* Detect if the device is configured in single chip addressing mode,
-	 * otherwise continue with address specific smi init/detection.
-	 */
-	err = mv88e6xxx_single_chip_detect(chip, mdiodev);
-	if (err) {
-		err = mv88e6xxx_smi_init(chip, mdiodev->bus, mdiodev->addr);
-		if (err)
-			goto out;
-
-		err = mv88e6xxx_detect(chip);
-		if (err)
-			goto out;
-	}
-
-	if (chip->info->edsa_support == MV88E6XXX_EDSA_SUPPORTED)
-		chip->tag_protocol = DSA_TAG_PROTO_EDSA;
-	else
-		chip->tag_protocol = DSA_TAG_PROTO_DSA;
+	err = (*detect)(chip);
+	if (err)
+		goto out;
 
 	mv88e6xxx_phy_init(chip);
 
@@ -7742,8 +7809,6 @@ static int mv88e6xxx_probe(struct mdio_device *mdiodev)
 	if (err)
 		goto out_g1_atu_prob_irq;
 
-	dsa_inband_init(&chip->rmu_inband, U8_MAX);
-
 	err = mv88e6xxx_register_switch(chip);
 	if (err)
 		goto out_g1_vtu_prob_irq;
@@ -7771,9 +7836,9 @@ out:
 	return err;
 }
 
-static void mv88e6xxx_remove(struct mdio_device *mdiodev)
+static void mv88e6xxx_remove_common(struct device *dev)
 {
-	struct dsa_switch *ds = dev_get_drvdata(&mdiodev->dev);
+	struct dsa_switch *ds = dev_get_drvdata(dev);
 	struct mv88e6xxx_chip *chip;
 
 	if (!ds)
@@ -7802,19 +7867,33 @@ static void mv88e6xxx_remove(struct mdio_device *mdiodev)
 	mv88e6xxx_phy_destroy(chip);
 }
 
-static void mv88e6xxx_shutdown(struct mdio_device *mdiodev)
+static void mv88e6xxx_shutdown_common(struct device *dev)
 {
-	struct dsa_switch *ds = dev_get_drvdata(&mdiodev->dev);
+	struct dsa_switch *ds = dev_get_drvdata(dev);
 
 	if (!ds)
 		return;
 
 	dsa_switch_shutdown(ds);
-
-	dev_set_drvdata(&mdiodev->dev, NULL);
+	dev_set_drvdata(dev, NULL);
 }
 
-static const struct of_device_id mv88e6xxx_of_match[] = {
+static int mv88e6xxx_probe_mdio(struct mdio_device *mdiodev)
+{
+	return mv88e6xxx_probe_common(&mdiodev->dev, mv88e6xxx_detect_mdio);
+}
+
+static void mv88e6xxx_remove_mdio(struct mdio_device *mdiodev)
+{
+	mv88e6xxx_remove_common(&mdiodev->dev);
+}
+
+static void mv88e6xxx_shutdown_mdio(struct mdio_device *mdiodev)
+{
+	mv88e6xxx_shutdown_common(&mdiodev->dev);
+}
+
+const struct of_device_id mv88e6xxx_of_match[] = {
 	{
 		.compatible = "marvell,mv88e6085",
 		.data = &mv88e6xxx_table[MV88E6085],
@@ -7827,15 +7906,19 @@ static const struct of_device_id mv88e6xxx_of_match[] = {
 		.compatible = "marvell,mv88e6250",
 		.data = &mv88e6xxx_table[MV88E6250],
 	},
+	{
+		.compatible = "marvell,mv88e6352",
+		.data = &mv88e6xxx_table[MV88E6352],
+	},
 	{ /* sentinel */ },
 };
 
 MODULE_DEVICE_TABLE(of, mv88e6xxx_of_match);
 
-static struct mdio_driver mv88e6xxx_driver = {
-	.probe	= mv88e6xxx_probe,
-	.remove = mv88e6xxx_remove,
-	.shutdown = mv88e6xxx_shutdown,
+static struct mdio_driver mv88e6xxx_mdio_driver = {
+	.probe	= mv88e6xxx_probe_mdio,
+	.remove = mv88e6xxx_remove_mdio,
+	.shutdown = mv88e6xxx_shutdown_mdio,
 	.mdiodrv.driver = {
 		.name = "mv88e6085",
 		.of_match_table = mv88e6xxx_of_match,
@@ -7843,7 +7926,61 @@ static struct mdio_driver mv88e6xxx_driver = {
 	},
 };
 
-mdio_module_driver(mv88e6xxx_driver);
+static int mv88e6xxx_probe_rmu_only(struct platform_device *pdev)
+{
+	return mv88e6xxx_probe_common(&pdev->dev, mv88e6xxx_detect_rmu_only);
+}
+
+static void mv88e6xxx_remove_rmu_only(struct platform_device *pdev)
+{
+	mv88e6xxx_remove_common(&pdev->dev);
+}
+
+static void mv88e6xxx_shutdown_rmu_only(struct platform_device *pdev)
+{
+	mv88e6xxx_shutdown_common(&pdev->dev);
+}
+
+static struct platform_driver mv88e6xxx_rmu_only_driver = {
+	.probe = mv88e6xxx_probe_rmu_only,
+	.remove = mv88e6xxx_remove_rmu_only,
+	.shutdown = mv88e6xxx_shutdown_rmu_only,
+	.driver = {
+		.name = "mv88e6xxx_rmu_only",
+		.of_match_table = mv88e6xxx_of_match,
+		.pm = &mv88e6xxx_pm_ops,
+	},
+};
+
+static int __init mv88e6xxx_module_init(void)
+{
+	int err;
+
+	err = mdio_driver_register(&mv88e6xxx_mdio_driver);
+	if (err == 0 && !mv88e6xxx_rmu_disabled())
+		err = platform_driver_register(&mv88e6xxx_rmu_only_driver);
+
+	return err;
+}
+module_init(mv88e6xxx_module_init);
+
+static void __exit mv88e6xxx_module_exit(void)
+{
+	if (!mv88e6xxx_rmu_disabled())
+		platform_driver_unregister(&mv88e6xxx_rmu_only_driver);
+	mdio_driver_unregister(&mv88e6xxx_mdio_driver);
+}
+module_exit(mv88e6xxx_module_exit);
+
+static bool disable_rmu = false;
+
+bool mv88e6xxx_rmu_disabled(void)
+{
+	return disable_rmu;
+}
+
+module_param(disable_rmu, bool, 0444);
+MODULE_PARM_DESC(disable_rmu, "Avoid using switch remote management unit (RMU)");
 
 MODULE_AUTHOR("Lennert Buytenhek <buytenh@wantstofly.org>");
 MODULE_DESCRIPTION("Driver for Marvell 88E6XXX ethernet switch chips");
