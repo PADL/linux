@@ -647,13 +647,13 @@ static int dsa_switch_setup(struct dsa_switch *ds)
 
 	ds->configure_vlan_while_not_filtering = true;
 
+	err = dsa_switch_setup_tag_protocol(ds);
+	if (err)
+		goto teardown_tag_protocol;
+
 	err = ds->ops->setup(ds);
 	if (err < 0)
 		goto unregister_notifier;
-
-	err = dsa_switch_setup_tag_protocol(ds);
-	if (err)
-		goto teardown;
 
 	if (!ds->user_mii_bus && ds->ops->phy_read) {
 		ds->user_mii_bus = mdiobus_alloc();
@@ -682,6 +682,8 @@ teardown:
 		ds->ops->teardown(ds);
 unregister_notifier:
 	dsa_switch_unregister_notifier(ds);
+teardown_tag_protocol:
+	dsa_switch_teardown_tag_protocol(ds);
 devlink_free:
 	dsa_switch_devlink_free(ds);
 	return err;
