@@ -120,6 +120,10 @@ properties:
         2: Secure: as for Enhanced, but also require the FDB or MDB entry
            to have its source port's bit set to one.
 
+  marvell,mv88e6xxx-rmu-enabled:
+    description: Marvell MV88E6xxx that support remote management (RMU)
+      can be probed without having MDIO connected, if this flag is set.
+
 allOf:
   - $ref: dsa.yaml#/$defs/ethernet-ports
 
