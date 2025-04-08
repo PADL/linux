@@ -4,9 +4,11 @@
  *
  * Copyright (c) 2022 Mattias Forsblad <mattias.forsblad@gmail.com>
  *
+ * Copyright (c) 2025 PADL Software Pty Ltd
  */
 
 #include <linux/dsa/mv88e6xxx.h>
+#include <linux/platform_data/mv88e6xxx.h>
 #include <net/dsa.h>
 #include "chip.h"
 #include "global1.h"
@@ -37,8 +39,9 @@ static void mv88e6xxx_rmu_create_l2(struct dsa_switch *ds,
 
 	/* Insert RMU MAC destination address */
 	eth = skb_push(skb, ETH_ALEN * 2);
+
 	memcpy(eth->h_dest, mv88e6xxx_rmu_dest_addr, ETH_ALEN);
-	ether_addr_copy(eth->h_source, chip->rmu_master->dev_addr);
+	ether_addr_copy(eth->h_source, chip->rmu_conduit->dev_addr);
 	skb_reset_network_header(skb);
 }
 
@@ -61,13 +64,65 @@ static void mv88e6xxx_rmu_fill_seqno_dsa(struct sk_buff *skb, u32 seqno)
 	mv88e6xxx_rmu_fill_seqno(skb, seqno, ETH_ALEN * 2);
 }
 
+static int __mv88e6xxx_rmu_request_retry(struct mv88e6xxx_chip *chip,
+					 struct sk_buff *skb, bool edsa,
+					 void *resp, unsigned int resp_len,
+					 int timeout_ms)
+{
+	void (*insert_seqno)(struct sk_buff *skb, u32 seqno);
+	unsigned long deadline;
+	ktime_t now;
+	int err;
+
+	now = ktime_get();
+
+	if (chip->rmu_state == MV88E6XXX_RMU_ONLY_ENABLED)
+		deadline = jiffies + msecs_to_jiffies(MV88E6XXX_RMU_RETRY_TIMEOUT_MS);
+	else
+		deadline = 0; /* do not retry RMU if MDIO fallback available */
+
+	insert_seqno = edsa ? mv88e6xxx_rmu_fill_seqno_edsa : mv88e6xxx_rmu_fill_seqno_dsa;
+
+	do {
+		err = dsa_inband_request(&chip->rmu_inband, skb_get(skb),
+					 insert_seqno, resp, resp_len,
+					 timeout_ms);
+		/* a zero-length response is treated as a timeout */
+		if (err == 0)
+			err = -ETIMEDOUT;
+		if (err != -ETIMEDOUT)
+			break;
+	} while (time_is_after_jiffies(deadline));
+
+	dev_kfree_skb_any(skb);
+
+	if (err == -ETIMEDOUT) {
+		bool defer = chip->rmu_state == MV88E6XXX_RMU_ONLY_ENABLED &&
+			     !chip->ds->dst->setup;
+
+		dev_err(chip->dev, "RMU: request timed out%s\n",
+			defer ? "; deferring" : "");
+
+		if (defer)
+			err = -EPROBE_DEFER;
+	}
+
+	return err;
+}
+
 static int mv88e6xxx_rmu_request(struct mv88e6xxx_chip *chip,
 				 const void *req, int req_len,
-				 void *resp, unsigned int resp_len)
+				 void *resp, unsigned int resp_len,
+				 int timeout_ms)
 {
 	struct sk_buff *skb;
 	unsigned char *data;
 	bool edsa;
+
+	if (!chip->rmu_conduit) {
+		dev_err(chip->dev, "RMU: conduit device uninitialized");
+		return -EINVAL;
+	}
 
 	skb = dev_alloc_skb(64);
 	if (!skb)
@@ -79,14 +134,15 @@ static int mv88e6xxx_rmu_request(struct mv88e6xxx_chip *chip,
 
 	edsa = chip->tag_protocol == DSA_TAG_PROTO_EDSA;
 
-	mv88e6xxx_rmu_create_l2(chip->ds, chip, skb, edsa);
-	skb->dev = chip->rmu_master;
+	if (chip->ds->tagger_data == NULL)
+		return -EOPNOTSUPP; /* can happen on teardown */
 
-	return dsa_inband_request(&chip->rmu_inband, skb,
-				  (edsa ? mv88e6xxx_rmu_fill_seqno_edsa :
-				   mv88e6xxx_rmu_fill_seqno_dsa),
-				  resp, resp_len,
-				  MV88E6XXX_RMU_WAIT_TIME_MS);
+	mv88e6xxx_rmu_create_l2(chip->ds, chip, skb, edsa);
+	skb->dev = chip->rmu_conduit;
+
+	return __mv88e6xxx_rmu_request_retry(chip, skb, edsa,
+					     resp, resp_len,
+					     timeout_ms);
 }
 
 int mv88e6xxx_rmu_stats(struct mv88e6xxx_chip *chip, int port,
@@ -106,7 +162,7 @@ int mv88e6xxx_rmu_stats(struct mv88e6xxx_chip *chip, int port,
 	int resp_len;
 	u64 high;
 
-	if (!chip->rmu_enabled)
+	if (chip->rmu_state == MV88E6XXX_RMU_DISABLED)
 		return -EOPNOTSUPP;
 
 	resp_len = sizeof(resp) - sizeof(resp.data);
@@ -118,16 +174,17 @@ int mv88e6xxx_rmu_stats(struct mv88e6xxx_chip *chip, int port,
 		resp_len += MV88E6XXX_RMU_STATS_TYPE_DATA1_LEN;
 
 	ret = mv88e6xxx_rmu_request(chip, req, sizeof(req),
-				    &resp, resp_len);
-	if (ret <  0) {
+				    &resp, resp_len,
+				    MV88E6XXX_RMU_REQUEST_TIMEOUT_MS);
+	if (ret < 0) {
 		dev_dbg(chip->dev, "RMU: error for command MIB %pe\n",
 			ERR_PTR(ret));
 		return ret;
 	}
 
 	if (ret < resp_len) {
-		dev_err(chip->dev, "RMU: MIB returned wrong length %d %d\n",
-			resp_len, ret);
+		dev_err(chip->dev, "RMU: MIB returned wrong length: rx %d expecting %d\n",
+			ret, resp_len);
 		return -EPROTO;
 	}
 
@@ -204,21 +261,24 @@ int mv88e6xxx_rmu_write(struct mv88e6xxx_chip *chip, int addr, int reg, u16 val)
 	int resp_len;
 	int ret = -1;
 
-	if (!chip->rmu_enabled || chip->rmu_is_slow)
+	if (chip->rmu_state == MV88E6XXX_RMU_DISABLED ||
+	    (chip->rmu_flags & MV88E6XXX_RMU_IS_SLOW))
 		return -EOPNOTSUPP;
 
 	resp_len = sizeof(resp);
 	ret = mv88e6xxx_rmu_request(chip, req, sizeof(req),
-				    &resp, resp_len);
-	if (ret <  0) {
-		dev_dbg(chip->dev, "RMU: error for command write %pe\n",
-			ERR_PTR(ret));
+				    &resp, resp_len,
+				    MV88E6XXX_RMU_REQUEST_TIMEOUT_MS);
+	if (ret < 0) {
+		dev_dbg(chip->dev, "RMU: error for command REQ_RW:WRITE %pe "
+			"addr %d reg %d val %04x\n",
+			ERR_PTR(ret), addr, reg, val);
 		return ret;
 	}
 
 	if (ret < resp_len) {
-		dev_err(chip->dev, "RMU: write returned wrong length %d %d\n",
-			resp_len, ret);
+		dev_err(chip->dev, "RMU: write returned wrong length: rx %d expecting %d\n",
+			ret, resp_len);
 		return -EPROTO;
 	}
 
@@ -231,28 +291,31 @@ int mv88e6xxx_rmu_write(struct mv88e6xxx_chip *chip, int addr, int reg, u16 val)
 	return 0;
 }
 
-static void mv88e6xxx_rmu_read_latancy(struct mv88e6xxx_chip *chip,
+static void mv88e6xxx_rmu_read_latency(struct mv88e6xxx_chip *chip,
 				       ktime_t latency)
 {
 	ktime_t average = 0;
 	int i;
 
-	if (chip->rmu_samples > ARRAY_SIZE(chip->rmu_read_latancies))
+	if (chip->rmu_state == MV88E6XXX_RMU_ONLY_ENABLED || /* no MDIO */
+	    chip->rmu_samples > ARRAY_SIZE(chip->rmu_read_latencies))
 		return;
 
-	chip->rmu_read_latancies[chip->rmu_samples++] = latency;
+	chip->rmu_read_latencies[chip->rmu_samples++] = latency;
 
-	if (chip->rmu_samples == ARRAY_SIZE(chip->rmu_read_latancies)) {
-		for (i = 0; i < ARRAY_SIZE(chip->rmu_read_latancies); i++)
-			average += chip->rmu_read_latancies[i];
-		average = average / ARRAY_SIZE(chip->rmu_read_latancies);
+	if (chip->rmu_samples == ARRAY_SIZE(chip->rmu_read_latencies)) {
+		for (i = 0; i < ARRAY_SIZE(chip->rmu_read_latencies); i++)
+			average += chip->rmu_read_latencies[i];
+		average = average / ARRAY_SIZE(chip->rmu_read_latencies);
 
 		dev_dbg(chip->dev, "RMU %lldus, smi %lldus\n",
 			div_u64(average, 1000),
-			div_u64(chip->smi_read_latancy, 1000));
+			div_u64(chip->smi_read_latency, 1000));
 
-		if (chip->smi_read_latancy < average)
-			chip->rmu_is_slow = true;
+		if (chip->smi_read_latency < average)
+			chip->rmu_flags |= MV88E6XXX_RMU_IS_SLOW;
+		else
+			chip->rmu_flags &= ~(MV88E6XXX_RMU_IS_SLOW);
 
 		chip->rmu_samples = U32_MAX;
 	}
@@ -275,23 +338,26 @@ int mv88e6xxx_rmu_read(struct mv88e6xxx_chip *chip, int addr, int reg,
 	ktime_t start;
 	int ret;
 
-	if (!chip->rmu_enabled || chip->rmu_is_slow)
+	if (chip->rmu_state == MV88E6XXX_RMU_DISABLED ||
+	    (chip->rmu_flags & MV88E6XXX_RMU_IS_SLOW))
 		return -EOPNOTSUPP;
 
-	start = ktime_get();
+	 start = ktime_get();
 
 	resp_len = sizeof(resp);
 	ret = mv88e6xxx_rmu_request(chip, req, sizeof(req),
-				    &resp, resp_len);
-	if (ret <  0) {
-		dev_dbg(chip->dev, "RMU: error for command read %pe\n",
-			ERR_PTR(ret));
+				    &resp, resp_len,
+				    MV88E6XXX_RMU_REQUEST_TIMEOUT_MS);
+	if (ret < 0) {
+		dev_dbg(chip->dev, "RMU: error for command REQ_RW:READ %pe "
+			"addr %d reg %d\n",
+			ERR_PTR(ret), addr, reg);
 		return ret;
 	}
 
 	if (ret < resp_len) {
-		dev_err(chip->dev, "RMU: read returned wrong length %d %d\n",
-			resp_len, ret);
+		dev_err(chip->dev, "RMU: read returned wrong length: rx %d expecting %d\n",
+			ret, resp_len);
 		return -EPROTO;
 	}
 
@@ -301,9 +367,10 @@ int mv88e6xxx_rmu_read(struct mv88e6xxx_chip *chip, int addr, int reg,
 		return -EPROTO;
 	}
 
-	mv88e6xxx_rmu_read_latancy(chip, ktime_get() - start);
+	mv88e6xxx_rmu_read_latency(chip, ktime_get() - start);
 
 	*val = ntohs(resp.value);
+
 	return 0;
 }
 
@@ -320,32 +387,39 @@ int mv88e6xxx_rmu_wait_bit(struct mv88e6xxx_chip *chip, int addr, int reg,
 		MV88E6XXX_RMU_REQ_RW_0_END,
 		MV88E6XXX_RMU_REQ_RW_1_END,
 	};
-	struct mv88e6xxx_rmu_header resp;
+	struct mv88e6xxx_rmu_rw_resp resp;
 	int resp_len;
 	int ret = -1;
 
-	if (!chip->rmu_enabled || chip->rmu_is_slow)
+	if (chip->rmu_state == MV88E6XXX_RMU_DISABLED ||
+	    (chip->rmu_flags & MV88E6XXX_RMU_IS_SLOW))
 		return -EOPNOTSUPP;
 
 	resp_len = sizeof(resp);
 	ret = mv88e6xxx_rmu_request(chip, req, sizeof(req),
-				    &resp, resp_len);
-	if (ret <  0) {
-		dev_dbg(chip->dev, "RMU: error for command write %pe\n",
+				    &resp, resp_len,
+				    MV88E6XXX_RMU_WAIT_BIT_TIMEOUT_MS);
+	if (ret < 0) {
+		dev_dbg(chip->dev, "RMU: error for command REQ_RW:WAIT %pe\n",
 			ERR_PTR(ret));
 		return ret;
 	}
 
 	if (ret < resp_len) {
-		dev_err(chip->dev, "RMU: wait bit returned wrong length %d %d\n",
-			resp_len, ret);
+		dev_err(chip->dev, "RMU: wait on bit returned wrong length: rx %d expecting %d\n",
+			ret, resp_len);
 		return -EPROTO;
 	}
 
-	if (resp.code != MV88E6XXX_RMU_RESP_CODE_REG_RW) {
-		dev_err(chip->dev, "RMU: wait bit returned wrong code %d\n",
-			be16_to_cpu(resp.code));
+	if (resp.rmu_header.code != MV88E6XXX_RMU_RESP_CODE_REG_RW) {
+		dev_err(chip->dev, "RMU: wait on bit returned wrong code %d\n",
+			be16_to_cpu(resp.rmu_header.code));
 		return -EPROTO;
+	}
+
+	if ((ntohs(resp.value) & 0xff) == 0xff) {
+		dev_err(chip->dev, "RMU: wait on bit timed out\n");
+		return -ETIMEDOUT;
 	}
 
 	return 0;
@@ -364,16 +438,17 @@ static int mv88e6xxx_rmu_get_id(struct mv88e6xxx_chip *chip)
 
 	resp_len = sizeof(resp);
 	ret = mv88e6xxx_rmu_request(chip, req, sizeof(req),
-				    &resp, resp_len);
-	if (ret <  0) {
+				    &resp, resp_len,
+				    MV88E6XXX_RMU_REQUEST_TIMEOUT_MS);
+	if (ret < 0) {
 		dev_dbg(chip->dev, "RMU: error for command GET_ID %pe\n",
 			ERR_PTR(ret));
 		return ret;
 	}
 
 	if (ret < resp_len) {
-		dev_err(chip->dev, "RMU: GET_ID returned wrong length %d %d\n",
-			resp_len, ret);
+		dev_err(chip->dev, "RMU: GET_ID returned wrong length: rx %d expecting %d\n",
+			ret, resp_len);
 		return -EPROTO;
 	}
 
@@ -389,15 +464,19 @@ static int mv88e6xxx_rmu_get_id(struct mv88e6xxx_chip *chip)
 }
 
 void mv88e6xxx_rmu_conduit_state_change(struct dsa_switch *ds,
-					const struct net_device *master,
+					const struct net_device *conduit,
 					bool operational)
 {
-	struct dsa_port *cpu_dp = master->dsa_ptr;
+	struct dsa_port *cpu_dp = conduit->dsa_ptr;
 	struct mv88e6xxx_chip *chip = ds->priv;
 	ktime_t start;
 	int port;
 	int ret;
 	u16 id;
+
+	if (mv88e6xxx_rmu_disabled() ||
+	    chip->rmu_state == MV88E6XXX_RMU_ONLY_ENABLED)
+		return;
 
 	port = dsa_towards_port(ds, cpu_dp->ds->index, cpu_dp->index);
 
@@ -407,23 +486,20 @@ void mv88e6xxx_rmu_conduit_state_change(struct dsa_switch *ds,
 		ret = chip->info->ops->rmu_enable(chip, port);
 
 		if (ret == -EOPNOTSUPP) {
-			dev_info(chip->dev, "RMU not usable for this board");
+			dev_info(chip->dev, "RMU: not usable on this board");
 			goto out;
-		}
-
-
-		if (ret < 0) {
-			dev_err(chip->dev, "RMU: Unable to enable on port %d %pe",
+		} else if (ret < 0) {
+			dev_err(chip->dev, "RMU: unable to enable on port %d %pe",
 				port, ERR_PTR(ret));
 			goto out;
 		}
 
-		chip->rmu_master = (struct net_device *)master;
+		chip->rmu_conduit = (struct net_device *)conduit;
 
 		/* Get the device ID to prove that the RMU works */
 		ret = mv88e6xxx_rmu_get_id(chip);
 		if (ret < 0) {
-			dev_err(chip->dev, "RMU: Check failed %pe",
+			dev_err(chip->dev, "RMU: initialization check failed %pe",
 				ERR_PTR(ret));
 			goto out;
 		}
@@ -431,17 +507,17 @@ void mv88e6xxx_rmu_conduit_state_change(struct dsa_switch *ds,
 		start = ktime_get();
 		ret = mv88e6xxx_port_read(chip, 0, MV88E6XXX_PORT_SWITCH_ID,
 					  &id);
-		chip->smi_read_latancy = ktime_get() - start;
+		chip->smi_read_latency = ktime_get() - start;
+		chip->rmu_state = MV88E6XXX_RMU_ENABLED;
 
-		chip->rmu_enabled = true;
-
-		dev_dbg(chip->dev, "RMU: Enabled on port %d", port);
+		dev_info(chip->dev, "RMU: enabled on port %d via conduit device %s",
+			 port, chip->rmu_conduit->name);
 	} else {
 		if (chip->info->ops->rmu_disable)
 			chip->info->ops->rmu_disable(chip);
 
-		chip->rmu_enabled = false;
-		chip->rmu_master = NULL;
+		chip->rmu_state = MV88E6XXX_RMU_DISABLED;
+		chip->rmu_conduit = NULL;
 	}
 
 out:
@@ -459,29 +535,32 @@ void mv88e6xxx_rmu_frame2reg_handler(struct dsa_switch *ds,
 	int resp_len;
 	int err = 0;
 
-	/* Check received destination MAC is the masters MAC address*/
-	if (!chip->rmu_master)
+	if (!chip->rmu_conduit)
 		goto drop;
 
+	/* Check received destination MAC is the conduit MAC address */
 	ethhdr = skb_mac_header(skb);
-	if (!ether_addr_equal(chip->rmu_master->dev_addr, ethhdr)) {
-		dev_dbg_ratelimited(ds->dev, "RMU: mismatching MAC address for request. Rx %pM expecting %pM\n",
-				    ethhdr, chip->rmu_master->dev_addr);
+	if (!ether_addr_equal(chip->rmu_conduit->dev_addr, ethhdr)) {
+		dev_dbg_ratelimited(ds->dev, "RMU: mismatched MAC address for request: rx %pM expecting %pM\n",
+				    ethhdr, chip->rmu_conduit->dev_addr);
 		goto drop;
 	}
 
 	expected_seqno = dsa_inband_seqno(&chip->rmu_inband);
 	if (seqno != expected_seqno) {
-		dev_dbg_ratelimited(ds->dev, "RMU: mismatching seqno for request. Rx %d expecting %d\n",
+		dev_dbg_ratelimited(ds->dev, "RMU: mismatched seqno for request: rx %d expecting %d\n",
 				    seqno, expected_seqno);
 		goto drop;
 	}
 
 	rmu_header = (struct mv88e6xxx_rmu_header *)(skb->data + 4);
 	resp_len = skb->len - 4;
-	if (rmu_header->format != MV88E6XXX_RMU_RESP_FORMAT_1 &&
+	if (resp_len == 0) {
+		dev_dbg_ratelimited(ds->dev, "RMU: zero length response\n");
+		err = -ETIMEDOUT;
+	} else if (rmu_header->format != MV88E6XXX_RMU_RESP_FORMAT_1 &&
 	    rmu_header->format != MV88E6XXX_RMU_RESP_FORMAT_2) {
-		dev_dbg_ratelimited(ds->dev, "RMU: invalid format. Rx %d\n",
+		dev_dbg_ratelimited(ds->dev, "RMU: invalid format: rx %d\n",
 				    be16_to_cpu(rmu_header->format));
 		err = -EPROTO;
 	}
@@ -489,4 +568,60 @@ void mv88e6xxx_rmu_frame2reg_handler(struct dsa_switch *ds,
 	dsa_inband_complete(&chip->rmu_inband, rmu_header, resp_len, err);
 drop:
 	return;
+}
+
+int mv88e6xxx_detect_rmu_only(struct mv88e6xxx_chip *chip)
+{
+	struct dsa_mv88e6xxx_pdata *pdata = chip->dev->platform_data;
+	struct device_node *np = chip->dev->of_node;
+	bool enabled;
+	int err;
+
+	/* RMU-only mode must be explicitly enabled through device tree or platform data */
+	if (np)
+		enabled = of_property_read_bool(np, "marvell,mv88e6xxx-rmu-enabled");
+	else if (pdata)
+		enabled = pdata->rmu_only_enabled;
+	else
+		enabled = false;
+
+	if (!enabled)
+		return -ENODEV;
+
+	chip->tag_protocol = DSA_TAG_PROTO_EDSA; /* must be set for get_tag_protocol() */
+	chip->rmu_state = MV88E6XXX_RMU_ONLY_ENABLED;
+
+	err = mv88e6xxx_register_switch(chip);
+	if (err && err != -EPROBE_DEFER)
+		dev_err(chip->dev, "RMU: failed RMU-only mode switch registration: %pe\n",
+			ERR_PTR(err));
+	if (err)
+		goto error;
+
+	BUG_ON(chip->ds == NULL);
+
+	err = mv88e6xxx_rmu_get_id(chip);
+	if (err) {
+		dev_err(chip->dev, "RMU: RMU-only mode validation failed: %pe\n",
+			ERR_PTR(err));
+		goto error;
+	}
+
+	err = mv88e6xxx_detect(chip);
+	if (err)
+		goto error;
+
+	BUG_ON(chip->rmu_conduit == NULL);
+
+	dev_info(chip->dev, "RMU: RMU-only mode enabled on conduit device %s\n",
+		 chip->rmu_conduit->name);
+
+	return 0;
+
+error:
+	chip->tag_protocol = DSA_TAG_PROTO_NONE;
+	chip->rmu_conduit = NULL;
+	chip->rmu_state = MV88E6XXX_RMU_DISABLED;
+
+	return err;
 }
