@@ -15,6 +15,7 @@ struct dsa_mv88e6xxx_pdata {
 	u32 eeprom_len;
 	int irq;
 	int avb_mode;
+	bool rmu_only_enabled;
 };
 
 #endif
