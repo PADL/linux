@@ -445,6 +445,9 @@ struct dsa_switch {
 	 */
 	u32			dscp_prio_mapping_is_global:1;
 
+	/* Switch is managed using in-band protocol only, not MDIO. */
+	u32			inband_only:1;
+
 	/* Listener for switch fabric events */
 	struct notifier_block	nb;
 
@@ -1418,5 +1421,6 @@ static inline bool dsa_user_dev_check(const struct net_device *dev)
 netdev_tx_t dsa_enqueue_skb(struct sk_buff *skb, struct net_device *dev);
 void dsa_port_phylink_mac_change(struct dsa_switch *ds, int port, bool up);
 bool dsa_supports_eee(struct dsa_switch *ds, int port);
+struct net_device *dsa_tree_find_first_conduit(struct dsa_switch_tree *dst);
 
 #endif
