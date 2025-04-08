@@ -2550,10 +2550,9 @@ static void dsa_user_get_stats64(struct net_device *dev,
 				 struct rtnl_link_stats64 *s)
 {
 	struct dsa_port *dp = dsa_user_to_port(dev);
-	struct dsa_switch *ds = dp->ds;
 
-	if (ds->ops->get_stats64)
-		ds->ops->get_stats64(ds, dp->index, s);
+	if (dp && dp->ds->ops->get_stats64)
+		dp->ds->ops->get_stats64(dp->ds, dp->index, s);
 	else
 		dev_get_tstats64(dev, s);
 }
