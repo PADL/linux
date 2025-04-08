@@ -9,7 +9,9 @@
 #ifndef _MV88E6XXX_RMU_H_
 #define _MV88E6XXX_RMU_H_
 
-#define MV88E6XXX_RMU_WAIT_TIME_MS		50
+#define MV88E6XXX_RMU_REQUEST_TIMEOUT_MS	50
+#define MV88E6XXX_RMU_WAIT_BIT_TIMEOUT_MS	1000
+#define MV88E6XXX_RMU_RETRY_TIMEOUT_MS		1000
 
 #define MV88E6XXX_RMU_REQ_FORMAT_GET_ID		htons(0x0000)
 #define MV88E6XXX_RMU_REQ_FORMAT_SOHO		htons(0x0001)
@@ -89,4 +91,21 @@ void mv88e6xxx_rmu_conduit_state_change(struct dsa_switch *ds,
 void mv88e6xxx_rmu_frame2reg_handler(struct dsa_switch *ds,
 				     struct sk_buff *skb,
 				     u8 seqno);
+int mv88e6xxx_detect_rmu_only(struct mv88e6xxx_chip *chip);
+int mv88e6xxx_rmu_only_early_setup(struct mv88e6xxx_chip *chip);
+
+static inline bool
+mv88e6xxx_is_rmu_only_cpu_port(struct mv88e6xxx_chip *chip, int port)
+{
+	return chip->rmu_state == MV88E6XXX_RMU_ONLY_ENABLED &&
+		dsa_is_cpu_port(chip->ds, port);
+}
+
+static inline bool
+mv88e6xxx_rmu_can_mdio_fallback(struct mv88e6xxx_chip *chip, int err)
+{
+	return (err == -EOPNOTSUPP || err == -ETIMEDOUT) &&
+		chip->rmu_state != MV88E6XXX_RMU_ONLY_ENABLED;
+}
+
 #endif /* _MV88E6XXX_RMU_H_ */
