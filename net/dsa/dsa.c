@@ -371,6 +371,7 @@ struct net_device *dsa_tree_find_first_conduit(struct dsa_switch_tree *dst)
 	cpu_dp = dsa_tree_find_first_cpu(dst);
 	return cpu_dp->conduit;
 }
+EXPORT_SYMBOL_GPL(dsa_tree_find_first_conduit);
 
 /* Assign the default CPU port (the first one in the tree) to all ports of the
  * fabric which don't already have one as part of their own switch.
@@ -473,7 +474,7 @@ static int dsa_port_setup(struct dsa_port *dp)
 		dsa_port_disable(dp);
 		break;
 	case DSA_PORT_TYPE_CPU:
-		if (dp->dn) {
+		if (!ds->inband_only && dp->dn) {
 			err = dsa_shared_port_link_register_of(dp);
 			if (err)
 				break;
@@ -536,11 +537,25 @@ static void dsa_port_teardown(struct dsa_port *dp)
 	switch (dp->type) {
 	case DSA_PORT_TYPE_UNUSED:
 		break;
-	case DSA_PORT_TYPE_CPU:
+	case DSA_PORT_TYPE_CPU: {
+		struct net_device *conduit = dp->conduit;
+
 		dsa_port_disable(dp);
 		if (dp->dn)
 			dsa_shared_port_link_unregister_of(dp);
+
+		/* Ports tear down before the conduit; clear dsa_ptr so the
+		 * rx path can't deref a stale pointer for user ports.
+		 */
+		if (conduit) {
+			rtnl_lock();
+			conduit->dsa_ptr = NULL;
+			wmb();
+			rtnl_unlock();
+		}
+
 		break;
+	}
 	case DSA_PORT_TYPE_DSA:
 		dsa_port_disable(dp);
 		if (dp->dn)
@@ -641,13 +656,13 @@ static int dsa_switch_setup(struct dsa_switch *ds)
 
 	ds->configure_vlan_while_not_filtering = true;
 
-	err = ds->ops->setup(ds);
-	if (err < 0)
-		goto unregister_notifier;
-
 	err = dsa_switch_setup_tag_protocol(ds);
 	if (err)
-		goto teardown;
+		goto unregister_notifier;
+
+	err = ds->ops->setup(ds);
+	if (err < 0)
+		goto teardown_tag_protocol;
 
 	if (!ds->user_mii_bus && ds->ops->phy_read) {
 		ds->user_mii_bus = mdiobus_alloc();
@@ -674,6 +689,8 @@ free_user_mii_bus:
 teardown:
 	if (ds->ops->teardown)
 		ds->ops->teardown(ds);
+teardown_tag_protocol:
+	dsa_switch_teardown_tag_protocol(ds);
 unregister_notifier:
 	dsa_switch_unregister_notifier(ds);
 devlink_free:
@@ -782,6 +799,50 @@ static int dsa_tree_setup_switches(struct dsa_switch_tree *dst)
 	return err;
 }
 
+/* An inband-only tree can only be set up once its conduit is up, but a
+ * deferred probe is only retried when some other device probes, and every
+ * built-in driver has bound long before user space brings the conduit up.
+ * Left alone the switch waits for the deferred probe timeout. Remember the
+ * conduit instead and rescan the switch's bus once the conduit is usable.
+ * Both variables are written under rtnl, here and from the notifier.
+ */
+static char dsa_inband_conduit_name[IFNAMSIZ];
+static const struct bus_type *dsa_inband_switch_bus;
+
+static void dsa_inband_rescan_work_fn(struct work_struct *work)
+{
+	if (bus_rescan_devices(dsa_inband_switch_bus))
+		pr_warn("DSA: rescan of the %s bus for the inband-only switch failed\n",
+			dsa_inband_switch_bus->name);
+}
+
+static DECLARE_WORK(dsa_inband_rescan_work, dsa_inband_rescan_work_fn);
+
+void dsa_inband_conduit_event(struct net_device *dev)
+{
+	ASSERT_RTNL();
+
+	if (!dsa_inband_conduit_name[0] ||
+	    strcmp(dev->name, dsa_inband_conduit_name))
+		return;
+
+	/* the tree came up by some other route */
+	if (netdev_uses_dsa(dev)) {
+		dsa_inband_conduit_name[0] = '\0';
+		return;
+	}
+
+	/* what dsa_tree_setup_conduit() requires, plus carrier so that the
+	 * inband requests which follow can be answered
+	 */
+	if (!(dev->flags & IFF_UP) || qdisc_tx_is_noop(dev) ||
+	    !netif_carrier_ok(dev))
+		return;
+
+	dsa_inband_conduit_name[0] = '\0';
+	schedule_work(&dsa_inband_rescan_work);
+}
+
 static int dsa_tree_setup_conduit(struct dsa_switch_tree *dst)
 {
 	struct dsa_port *cpu_dp;
@@ -793,6 +854,16 @@ static int dsa_tree_setup_conduit(struct dsa_switch_tree *dst)
 		struct net_device *conduit = cpu_dp->conduit;
 		bool admin_up = (conduit->flags & IFF_UP) &&
 				!qdisc_tx_is_noop(conduit);
+
+		/* inband-only requires conduit interface to be already up */
+		if (cpu_dp->ds->inband_only && !admin_up) {
+			pr_info("DSA: deferring as conduit interface %s is not up\n", conduit->name);
+			strscpy(dsa_inband_conduit_name, conduit->name,
+				sizeof(dsa_inband_conduit_name));
+			dsa_inband_switch_bus = cpu_dp->ds->dev->bus;
+			err = -EPROBE_DEFER;
+			break;
+		}
 
 		err = dsa_conduit_setup(conduit, cpu_dp);
 		if (err)
@@ -885,21 +956,27 @@ static int dsa_tree_setup(struct dsa_switch_tree *dst)
 	if (err)
 		goto teardown_rtable;
 
-	err = dsa_tree_setup_switches(dst);
+	err = dsa_tree_setup_conduit(dst);
 	if (err)
 		goto teardown_cpu_ports;
+
+	/* NB: conduit setup replays admin/oper state before switch notifiers
+	 * are registered below. Consumers of conduit_state_change (e.g. RMU)
+	 * will miss this initial replay and rely on later real netdev events.
+	 * If this becomes a problem, a second replay after switch setup may
+	 * be needed.
+	 */
+	err = dsa_tree_setup_switches(dst);
+	if (err)
+		goto teardown_conduit;
 
 	err = dsa_tree_setup_ports(dst);
 	if (err)
 		goto teardown_switches;
 
-	err = dsa_tree_setup_conduit(dst);
-	if (err)
-		goto teardown_ports;
-
 	err = dsa_tree_setup_lags(dst);
 	if (err)
-		goto teardown_conduit;
+		goto teardown_ports;
 
 	dst->setup = true;
 
@@ -907,12 +984,12 @@ static int dsa_tree_setup(struct dsa_switch_tree *dst)
 
 	return 0;
 
-teardown_conduit:
-	dsa_tree_teardown_conduit(dst);
 teardown_ports:
 	dsa_tree_teardown_ports(dst);
 teardown_switches:
 	dsa_tree_teardown_switches(dst);
+teardown_conduit:
+	dsa_tree_teardown_conduit(dst);
 teardown_cpu_ports:
 	dsa_tree_teardown_cpu_ports(dst);
 teardown_rtable:
@@ -928,11 +1005,11 @@ static void dsa_tree_teardown(struct dsa_switch_tree *dst)
 
 	dsa_tree_teardown_lags(dst);
 
-	dsa_tree_teardown_conduit(dst);
-
 	dsa_tree_teardown_ports(dst);
 
 	dsa_tree_teardown_switches(dst);
+
+	dsa_tree_teardown_conduit(dst);
 
 	dsa_tree_teardown_cpu_ports(dst);
 
@@ -1049,6 +1126,13 @@ void dsa_tree_conduit_admin_state_change(struct dsa_switch_tree *dst,
 	if (netif_is_lag_master(conduit))
 		return;
 
+	/* The CPU port tears down before the conduit and clears dsa_ptr,
+	 * so the admin down synthesized by dsa_tree_teardown_conduit()
+	 * has no port left to record it on.
+	 */
+	if (!cpu_dp)
+		return;
+
 	if ((dsa_port_conduit_is_operational(cpu_dp)) !=
 	    (up && cpu_dp->conduit_oper_up))
 		notify = true;
@@ -1070,6 +1154,9 @@ void dsa_tree_conduit_oper_state_change(struct dsa_switch_tree *dst,
 	 * but rather just of physical DSA conduits
 	 */
 	if (netif_is_lag_master(conduit))
+		return;
+
+	if (!cpu_dp)
 		return;
 
 	if ((dsa_port_conduit_is_operational(cpu_dp)) !=
@@ -1638,6 +1725,7 @@ void dsa_switch_shutdown(struct dsa_switch *ds)
 	dsa_switch_for_each_cpu_port(dp, ds) {
 		dp->conduit->dsa_ptr = NULL;
 		netdev_put(dp->conduit, &dp->conduit_tracker);
+		wmb();
 	}
 
 	rtnl_unlock();
