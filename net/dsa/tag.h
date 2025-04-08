@@ -33,8 +33,13 @@ static inline struct net_device *dsa_conduit_find_user(struct net_device *dev,
 						       int device, int port)
 {
 	struct dsa_port *cpu_dp = dev->dsa_ptr;
-	struct dsa_switch_tree *dst = cpu_dp->dst;
+	struct dsa_switch_tree *dst;
 	struct dsa_port *dp;
+
+	if (unlikely(!cpu_dp))
+		return NULL;
+
+	dst = cpu_dp->dst;
 
 	list_for_each_entry(dp, &dst->ports, list)
 		if (dp->ds->index == device && dp->index == port &&
@@ -48,8 +53,13 @@ static inline struct dsa_switch *dsa_master_find_switch(struct net_device *dev,
 							int device)
 {
 	struct dsa_port *cpu_dp = dev->dsa_ptr;
-	struct dsa_switch_tree *dst = cpu_dp->dst;
+	struct dsa_switch_tree *dst;
 	struct dsa_port *dp;
+
+	if (unlikely(!cpu_dp))
+		return NULL;
+
+	dst = cpu_dp->dst;
 
 	list_for_each_entry(dp, &dst->ports, list)
 		if (dp->ds->index == device)
