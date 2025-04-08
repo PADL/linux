@@ -221,6 +221,7 @@ static struct sk_buff *dsa_rcv_ll(struct sk_buff *skb, struct net_device *dev,
 	/* The ethertype field is part of the DSA header. */
 	dsa_header = dsa_etype_header_pos_rx(skb);
 	source_device = dsa_header[0] & 0x1f;
+	ds = dsa_conduit_find_switch(dev, source_device);
 
 	cmd = dsa_header[0] >> 6;
 	switch (cmd) {
@@ -235,7 +236,6 @@ static struct sk_buff *dsa_rcv_ll(struct sk_buff *skb, struct net_device *dev,
 		case DSA_CODE_FRAME2REG: {
 			u8 seqno = dsa_header[3];
 
-			ds = dsa_conduit_find_switch(dev, source_device);
 			if (!ds)
 				return NULL;
 			tagger_data = ds->tagger_data;
@@ -270,6 +270,10 @@ static struct sk_buff *dsa_rcv_ll(struct sk_buff *skb, struct net_device *dev,
 	default:
 		return NULL;
 	}
+
+	/* whilst setting up switch, RMU is OK but other packets are not */
+	if (ds && !ds->dst->setup)
+		return NULL;
 
 	source_port = (dsa_header[1] >> 3) & 0x1f;
 
