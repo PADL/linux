@@ -4,9 +4,12 @@
  *
  * Copyright (c) 2022 Mattias Forsblad <mattias.forsblad@gmail.com>
  *
+ * Copyright (c) 2025 PADL Software Pty Ltd
  */
 
 #include <linux/dsa/mv88e6xxx.h>
+#include <linux/platform_data/mv88e6xxx.h>
+#include <linux/platform_device.h>
 #include <net/dsa.h>
 #include "chip.h"
 #include "global1.h"
@@ -37,6 +40,7 @@ static void mv88e6xxx_rmu_create_l2(struct dsa_switch *ds,
 
 	/* Insert RMU MAC destination address */
 	eth = skb_push(skb, ETH_ALEN * 2);
+
 	memcpy(eth->h_dest, mv88e6xxx_rmu_dest_addr, ETH_ALEN);
 	ether_addr_copy(eth->h_source, conduit->dev_addr);
 	skb_reset_network_header(skb);
@@ -59,6 +63,52 @@ static void mv88e6xxx_rmu_fill_seqno_edsa(struct sk_buff *skb, u32 seqno)
 static void mv88e6xxx_rmu_fill_seqno_dsa(struct sk_buff *skb, u32 seqno)
 {
 	mv88e6xxx_rmu_fill_seqno(skb, seqno, ETH_ALEN * 2);
+}
+
+static int __mv88e6xxx_rmu_request_retry(struct mv88e6xxx_chip *chip,
+					 struct sk_buff *skb, bool edsa,
+					 void *resp, unsigned int resp_len,
+					 int timeout_ms)
+{
+	void (*insert_seqno)(struct sk_buff *skb, u32 seqno);
+	unsigned long deadline;
+	ktime_t now;
+	int err;
+
+	now = ktime_get();
+
+	if (chip->rmu_state == MV88E6XXX_RMU_ONLY_ENABLED)
+		deadline = jiffies + msecs_to_jiffies(MV88E6XXX_RMU_RETRY_TIMEOUT_MS);
+	else
+		deadline = 0; /* do not retry RMU if MDIO fallback available */
+
+	insert_seqno = edsa ? mv88e6xxx_rmu_fill_seqno_edsa : mv88e6xxx_rmu_fill_seqno_dsa;
+
+	do {
+		err = dsa_inband_request(&chip->rmu_inband, skb_get(skb),
+					 insert_seqno, resp, resp_len,
+					 timeout_ms);
+		/* a zero-length response is treated as a timeout */
+		if (err == 0)
+			err = -ETIMEDOUT;
+		if (err != -ETIMEDOUT)
+			break;
+	} while (time_is_after_jiffies(deadline));
+
+	dev_kfree_skb_any(skb);
+
+	if (err == -ETIMEDOUT) {
+		bool defer = chip->rmu_state == MV88E6XXX_RMU_ONLY_ENABLED &&
+			     !chip->ds->dst->setup;
+
+		dev_err(chip->dev, "RMU: request timed out%s\n",
+			defer ? "; deferring" : "");
+
+		if (defer)
+			err = -EPROBE_DEFER;
+	}
+
+	return err;
 }
 
 static int mv88e6xxx_rmu_request(struct mv88e6xxx_chip *chip,
@@ -100,10 +150,9 @@ static int mv88e6xxx_rmu_request(struct mv88e6xxx_chip *chip,
 	mv88e6xxx_rmu_create_l2(chip->ds, conduit, skb, edsa);
 	skb->dev = conduit;
 
-	return dsa_inband_request(&chip->rmu_inband, skb,
-				  (edsa ? mv88e6xxx_rmu_fill_seqno_edsa :
-				   mv88e6xxx_rmu_fill_seqno_dsa),
-				  resp, resp_len, timeout_ms);
+	return __mv88e6xxx_rmu_request_retry(chip, skb, edsa,
+					     resp, resp_len,
+					     timeout_ms);
 }
 
 int mv88e6xxx_rmu_dump_atu(struct mv88e6xxx_chip *chip,
@@ -334,7 +383,8 @@ static void mv88e6xxx_rmu_read_latency(struct mv88e6xxx_chip *chip,
 	ktime_t average = 0;
 	int i;
 
-	if (chip->rmu_samples >= ARRAY_SIZE(chip->rmu_read_latencies))
+	if (chip->rmu_state == MV88E6XXX_RMU_ONLY_ENABLED || /* no MDIO */
+	    chip->rmu_samples > ARRAY_SIZE(chip->rmu_read_latencies))
 		return;
 
 	chip->rmu_read_latencies[chip->rmu_samples++] = latency;
@@ -350,6 +400,8 @@ static void mv88e6xxx_rmu_read_latency(struct mv88e6xxx_chip *chip,
 
 		if (chip->smi_read_latency < average)
 			chip->rmu_flags |= MV88E6XXX_RMU_IS_SLOW;
+		else
+			chip->rmu_flags &= ~(MV88E6XXX_RMU_IS_SLOW);
 
 		chip->rmu_samples = U32_MAX;
 	}
@@ -507,6 +559,10 @@ void mv88e6xxx_rmu_conduit_state_change(struct dsa_switch *ds,
 	int ret;
 	u16 id;
 
+	if (mv88e6xxx_rmu_disabled() ||
+	    chip->rmu_state == MV88E6XXX_RMU_ONLY_ENABLED)
+		return;
+
 	port = dsa_towards_port(ds, cpu_dp->ds->index, cpu_dp->index);
 
 	mv88e6xxx_reg_lock(chip);
@@ -570,11 +626,11 @@ void mv88e6xxx_rmu_frame2reg_handler(struct dsa_switch *ds,
 	int resp_len;
 	int err = 0;
 
-	/* Check received destination MAC is the conduit MAC address */
 	conduit = READ_ONCE(chip->rmu_conduit);
 	if (!conduit)
 		goto drop;
 
+	/* Check received destination MAC is the conduit MAC address */
 	ethhdr = skb_mac_header(skb);
 	if (!ether_addr_equal(conduit->dev_addr, ethhdr)) {
 		dev_dbg_ratelimited(ds->dev, "RMU: mismatched MAC address for request: rx %pM expecting %pM\n",
@@ -608,4 +664,52 @@ void mv88e6xxx_rmu_frame2reg_handler(struct dsa_switch *ds,
 	dsa_inband_complete(&chip->rmu_inband, rmu_header, resp_len, err);
 drop:
 	return;
+}
+
+int mv88e6xxx_detect_rmu_only(struct mv88e6xxx_chip *chip)
+{
+	struct dsa_mv88e6xxx_pdata *pdata = chip->dev->platform_data;
+	struct device_node *np = chip->dev->of_node;
+	int err;
+
+	/* RMU-only mode requires platform binding (no MDIO); board files gate on pdata */
+	if (!dev_is_platform(chip->dev))
+		return -ENODEV;
+	if (!np && !pdata->rmu_only_enabled)
+		return -ENODEV;
+
+	chip->tag_protocol = DSA_TAG_PROTO_EDSA; /* must be set for get_tag_protocol() */
+	chip->rmu_state = MV88E6XXX_RMU_ONLY_ENABLED;
+
+	err = mv88e6xxx_register_switch(chip);
+	if (err && err != -EPROBE_DEFER)
+		dev_err(chip->dev, "RMU: failed RMU-only mode switch registration: %pe\n",
+			ERR_PTR(err));
+	if (err)
+		goto error;
+
+	err = mv88e6xxx_rmu_get_id(chip);
+	if (err) {
+		dev_err(chip->dev, "RMU: RMU-only mode validation failed: %pe\n",
+			ERR_PTR(err));
+		goto error_unregister;
+	}
+
+	err = mv88e6xxx_detect(chip);
+	if (err)
+		goto error_unregister;
+
+	dev_info(chip->dev, "RMU: RMU-only mode enabled on conduit device %s\n",
+		 chip->rmu_conduit->name);
+
+	return 0;
+
+error_unregister:
+	dsa_unregister_switch(chip->ds);
+error:
+	chip->tag_protocol = DSA_TAG_PROTO_NONE;
+	chip->rmu_conduit = NULL;
+	chip->rmu_state = MV88E6XXX_RMU_DISABLED;
+
+	return err;
 }
