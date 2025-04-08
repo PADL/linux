@@ -57,6 +57,9 @@ static inline struct dsa_port *dsa_user_to_port(const struct net_device *dev)
 {
 	struct dsa_user_priv *p = netdev_priv(dev);
 
+	if (unlikely(!p))
+		return NULL;
+
 	return p->dp;
 }
 
@@ -64,6 +67,9 @@ static inline struct net_device *
 dsa_user_to_conduit(const struct net_device *dev)
 {
 	struct dsa_port *dp = dsa_user_to_port(dev);
+
+	if (unlikely(!dp))
+		return NULL;
 
 	return dsa_port_to_conduit(dp);
 }
