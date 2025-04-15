@@ -3597,9 +3597,9 @@ static int mv88e6xxx_setup_port(struct mv88e6xxx_chip *chip, int port)
 	if (err)
 		return err;
 
-	/* Egress rate control 2: disable egress rate control. */
+	/* Egress rate control 2: use a Strict priority scheme for all priorities */
 	err = mv88e6xxx_port_write(chip, port, MV88E6XXX_PORT_EGRESS_RATE_CTL2,
-				   0x0000);
+				   0x3000);
 	if (err)
 		return err;
 
