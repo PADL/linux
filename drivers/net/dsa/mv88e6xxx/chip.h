@@ -864,6 +864,8 @@ struct mv88e6xxx_tc_ops {
 	int (*tc_disable)(struct mv88e6xxx_chip *chip);
 	int (*set_port_cbs_qopt)(struct mv88e6xxx_chip *chip, int port,
 				 const struct tc_cbs_qopt_offload *cbs_qopt);
+	int (*ip_prio_map_write)(struct mv88e6xxx_chip *chip,
+				 u8 dscp, u8 fpri, u8 qpri);
 };
 
 /* Per-family 802.1Qav credit-based shaping capability data. */
