@@ -847,6 +847,8 @@ struct mv88e6xxx_tc_ops {
 	int (*map_tc_cbs_qopt)(struct mv88e6xxx_chip *chip,
 			       const struct tc_cbs_qopt_offload *cbs_qopt,
 			       u16 *rate, u16 *hilimit);
+	int (*ip_prio_map_write)(struct mv88e6xxx_chip *chip,
+				 u8 dscp, u8 fpri, u8 qpri);
 };
 
 static inline bool mv88e6xxx_has_stu(struct mv88e6xxx_chip *chip)

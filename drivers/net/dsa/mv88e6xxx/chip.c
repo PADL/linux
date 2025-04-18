@@ -36,6 +36,8 @@
 #include <linux/gpio/consumer.h>
 #include <linux/phylink.h>
 #include <net/dsa.h>
+#include <net/dscp.h>
+#include <net/ieee8021q.h>
 
 #include "avb.h"
 #include "chip.h"
@@ -1659,6 +1661,27 @@ static int mv88e6xxx_pri_setup(struct mv88e6xxx_chip *chip)
 	}
 
 	return 0;
+}
+
+static int mv88e6xxx_dscp_setup(struct mv88e6xxx_chip *chip)
+{
+	const struct mv88e6xxx_tc_ops *tc_ops = chip->info->ops->tc_ops;
+	u8 dscp[] = { DSCP_CS0, DSCP_CS1, DSCP_EF, DSCP_CS7 };
+	size_t i;
+	int err;
+
+	if (!tc_ops || !tc_ops->ip_prio_map_write)
+		return 0;
+
+	for (i = 0; i < ARRAY_SIZE(dscp); i++) {
+		int pri = ietf_dscp_to_ieee8021q_tt(dscp[i]);
+
+		err = tc_ops->ip_prio_map_write(chip, dscp[i], i, pri);
+		if (err)
+			break;
+	}
+
+	return err;
 }
 
 static int mv88e6xxx_devmap_setup(struct mv88e6xxx_chip *chip)
@@ -4117,6 +4140,10 @@ static int mv88e6xxx_setup(struct dsa_switch *ds)
 		goto unlock;
 
 	err = mv88e6xxx_pri_setup(chip);
+	if (err)
+		goto unlock;
+
+	err = mv88e6xxx_dscp_setup(chip);
 	if (err)
 		goto unlock;
 
