@@ -76,6 +76,10 @@ static int mv88e6xxx_dsa_inband_request_retry(struct mv88e6xxx_chip *chip,
 	if (chip->rmu_state == MV88E6XXX_RMU_ONLY_ENABLED) {
 		retry_timeout = jiffies +
 			msecs_to_jiffies(MV88E6XXX_RMU_RETRY_TIMEOUT_MS);
+
+		/* delay retry timeout whilst booting */
+		if (!chip->ds->dst->setup)
+			retry_timeout *= 10;
 	}
 
 	do {
