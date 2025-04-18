@@ -36,6 +36,8 @@
 #include <linux/gpio/consumer.h>
 #include <linux/phylink.h>
 #include <net/dsa.h>
+#include <net/dscp.h>
+#include <net/ieee8021q.h>
 
 #include "avb.h"
 #include "chip.h"
@@ -1659,6 +1661,36 @@ static int mv88e6xxx_pri_setup(struct mv88e6xxx_chip *chip)
 	}
 
 	return 0;
+}
+
+static int mv88e6xxx_dscp_setup(struct mv88e6xxx_chip *chip)
+{
+	const struct mv88e6xxx_tc_ops *tc_ops = chip->info->ops->tc_ops;
+	u8 dscp[] = { DSCP_CS0, DSCP_CS1, DSCP_EF, DSCP_CS7 };
+	size_t i;
+	int err;
+
+	if (!chip->info->num_tx_queues)
+		return 0;
+
+	if (!tc_ops || !tc_ops->ip_prio_map_write)
+		return 0;
+
+	/* in order to keep QPri 3 free for AVB Class A traffic, limit
+	 * FPri:QPri mapping as if there were only three queues. */
+	for (i = 0; i < ARRAY_SIZE(dscp); i++) {
+		enum ieee8021q_traffic_type fpri = ietf_dscp_to_ieee8021q_tt(dscp[i]);
+		int qpri = ieee8021q_tt_to_tc(fpri, chip->info->num_tx_queues - 1);
+
+		err = tc_ops->ip_prio_map_write(chip, dscp[i], fpri, qpri);
+		if (err) {
+			dev_err(chip->dev, "failed to enable DSCP (FPri %d, QPri %d): %pe\n",
+				fpri, qpri, ERR_PTR(err));
+			break;
+		}
+	}
+
+	return err;
 }
 
 static int mv88e6xxx_devmap_setup(struct mv88e6xxx_chip *chip)
@@ -4196,6 +4228,10 @@ static int mv88e6xxx_setup(struct dsa_switch *ds)
 		goto unlock;
 
 	err = mv88e6xxx_pri_setup(chip);
+	if (err)
+		goto unlock;
+
+	err = mv88e6xxx_dscp_setup(chip);
 	if (err)
 		goto unlock;
 
