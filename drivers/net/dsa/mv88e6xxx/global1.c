@@ -746,3 +746,17 @@ int mv88e6xxx_g1_stats_clear(struct mv88e6xxx_chip *chip)
 	/* Wait for the flush to complete. */
 	return mv88e6xxx_g1_stats_wait(chip);
 }
+
+int mv88e6320_g1_ip_prio_map_write(struct mv88e6xxx_chip *chip,
+				   u8 dscp, u8 fpri, u8 qpri)
+{
+	u16 reg;
+
+	reg = MV88E6320_G1_IP_PRIO_MAP_TABLE_UPDATE;
+	reg |= MV88E6320_G1_IP_PRIO_MAP_TABLE_USE_IP_FPRI;
+	reg |= MV88E6320_G1_IP_PRIO_MAP_TABLE_PTR_SET(dscp);
+	reg |= MV88E6320_G1_IP_PRIO_MAP_TABLE_IP_FPRI_SET(fpri);
+	reg |= MV88E6320_G1_IP_PRIO_MAP_TABLE_IP_QPRI_SET(qpri);
+
+	return mv88e6xxx_g1_write(chip, MV88E6320_G1_IP_PRIO_MAP_TABLE, reg);
+}
