@@ -470,10 +470,25 @@ static int mv88e6352_map_tc_cbs_qopt(struct mv88e6xxx_chip *chip,
 	return 0;
 }
 
+static int mv88e6352_ip_prio_map_write(struct mv88e6xxx_chip *chip,
+				       u8 dscp, u8 fpri, u8 qpri)
+{
+	u16 reg;
+
+	reg = MV88E6320_G1_IP_PRIO_MAP_TABLE_UPDATE;
+	reg |= MV88E6320_G1_IP_PRIO_MAP_TABLE_USE_IP_FPRI;
+	reg |= MV88E6320_G1_IP_PRIO_MAP_TABLE_PTR_SET(dscp);
+	reg |= MV88E6320_G1_IP_PRIO_MAP_TABLE_IP_FPRI_SET(fpri);
+	reg |= MV88E6320_G1_IP_PRIO_MAP_TABLE_IP_QPRI_SET(qpri);
+
+	return mv88e6xxx_g1_write(chip, MV88E6320_G1_IP_PRIO_MAP_TABLE, reg);
+}
+
 const struct mv88e6xxx_tc_ops mv88e6352_tc_ops = {
 	.tc_enable		= mv88e6352_tc_enable,
 	.tc_disable		= mv88e6352_tc_disable,
 	.map_tc_cbs_qopt	= mv88e6352_map_tc_cbs_qopt,
+	.ip_prio_map_write	= mv88e6352_ip_prio_map_write,
 };
 
 static inline u16 mv88e6390_avb_pri_map_to_reg(const struct mv88e6xxx_avb_priority_map map[])
