@@ -6707,7 +6707,8 @@ static int mv88e6xxx_port_mdb_add(struct dsa_switch *ds, int port,
 	int err;
 
 #ifdef CONFIG_NET_DSA_MV88E6XXX_SRP
-	if (chip->avb_tc_policy.port_mask & BIT(port))
+	if ((chip->avb_tc_policy.port_mask & BIT(port)) &&
+	    !ether_addr_is_ip_mcast(mdb->addr))
 		state = MV88E6XXX_G1_ATU_DATA_STATE_MC_STATIC_AVB_NRL;
 	else
 #endif
