@@ -14,6 +14,7 @@
 #include "global1.h"
 #include "switchdev.h"
 #include "trace.h"
+#include "rmu.h"
 
 /* Offset 0x01: ATU FID Register */
 
@@ -291,6 +292,26 @@ static int mv88e6xxx_g1_atu_mac_read(struct mv88e6xxx_chip *chip,
 	return 0;
 }
 
+static int mv88e6xxx_g1_atu_mac_data_read(struct mv88e6xxx_chip *chip,
+					  struct mv88e6xxx_atu_entry *entry)
+{
+	int err;
+
+	err = mv88e6xxx_rmu_atu_mac_data_read(chip, entry);
+	if (!mv88e6xxx_rmu_can_mdio_fallback(chip, err))
+		return err;
+
+	err = mv88e6xxx_g1_atu_mac_read(chip, entry);
+	if (err)
+		return err;
+
+	err = mv88e6xxx_g1_atu_data_read(chip, entry);
+	if (err)
+		return err;
+
+	return 0;
+}
+
 static int mv88e6xxx_g1_atu_mac_write(struct mv88e6xxx_chip *chip,
 				      struct mv88e6xxx_atu_entry *entry)
 {
@@ -307,6 +328,26 @@ static int mv88e6xxx_g1_atu_mac_write(struct mv88e6xxx_chip *chip,
 	return 0;
 }
 
+static int mv88e6xxx_g1_atu_mac_data_write(struct mv88e6xxx_chip *chip,
+					   struct mv88e6xxx_atu_entry *entry)
+{
+	int err;
+
+	err = mv88e6xxx_rmu_atu_mac_data_write(chip, entry);
+	if (!mv88e6xxx_rmu_can_mdio_fallback(chip, err))
+		return err;
+
+	err = mv88e6xxx_g1_atu_mac_write(chip, entry);
+	if (err)
+		return err;
+
+	err = mv88e6xxx_g1_atu_data_write(chip, entry);
+	if (err)
+		return err;
+
+	return 0;
+}
+
 /* Address Translation Unit operations */
 
 int mv88e6xxx_g1_atu_getnext(struct mv88e6xxx_chip *chip, u16 fid,
@@ -319,7 +360,7 @@ int mv88e6xxx_g1_atu_getnext(struct mv88e6xxx_chip *chip, u16 fid,
 		return err;
 
 	/* Write the MAC address to iterate from only once */
-	if (!entry->state) {
+	if (!entry->state || chip->rmu_state != MV88E6XXX_RMU_DISABLED) {
 		err = mv88e6xxx_g1_atu_mac_write(chip, entry);
 		if (err)
 			return err;
@@ -329,11 +370,7 @@ int mv88e6xxx_g1_atu_getnext(struct mv88e6xxx_chip *chip, u16 fid,
 	if (err)
 		return err;
 
-	err = mv88e6xxx_g1_atu_data_read(chip, entry);
-	if (err)
-		return err;
-
-	return mv88e6xxx_g1_atu_mac_read(chip, entry);
+	return mv88e6xxx_g1_atu_mac_data_read(chip, entry);
 }
 
 int mv88e6xxx_g1_atu_loadpurge(struct mv88e6xxx_chip *chip, u16 fid,
@@ -345,11 +382,7 @@ int mv88e6xxx_g1_atu_loadpurge(struct mv88e6xxx_chip *chip, u16 fid,
 	if (err)
 		return err;
 
-	err = mv88e6xxx_g1_atu_mac_write(chip, entry);
-	if (err)
-		return err;
-
-	err = mv88e6xxx_g1_atu_data_write(chip, entry);
+	err = mv88e6xxx_g1_atu_mac_data_write(chip, entry);
 	if (err)
 		return err;
 
@@ -443,11 +476,7 @@ static irqreturn_t mv88e6xxx_g1_atu_prob_irq_thread_fn(int irq, void *dev_id)
 	if (err)
 		goto out_unlock;
 
-	err = mv88e6xxx_g1_atu_data_read(chip, &entry);
-	if (err)
-		goto out_unlock;
-
-	err = mv88e6xxx_g1_atu_mac_read(chip, &entry);
+	err = mv88e6xxx_g1_atu_mac_data_read(chip, &entry);
 	if (err)
 		goto out_unlock;
 
