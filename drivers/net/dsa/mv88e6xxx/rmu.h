@@ -59,12 +59,24 @@ struct mv88e6xxx_rmu_header {
 	__be16 code;
 } __packed;
 
+struct mv88e6xxx_rmu_rw_command {
+	__be16 cmd;
+	__be16 value;
+} __packed;
+
 struct mv88e6xxx_rmu_rw_resp {
 	struct mv88e6xxx_rmu_header rmu_header;
 	__be16 cmd;
 	__be16 value;
 	__be16 end0;
 	__be16 end1;
+} __packed;
+
+struct mv88e6xxx_rmu_rw_mac_data_resp {
+	struct mv88e6xxx_rmu_header rmu_header;
+	struct mv88e6xxx_rmu_rw_command mac[3];
+	struct mv88e6xxx_rmu_rw_command data;
+	struct mv88e6xxx_rmu_rw_command end;
 } __packed;
 
 struct mv88e6xxx_rmu_mib_resp {
@@ -94,6 +106,10 @@ void mv88e6xxx_rmu_frame2reg_handler(struct dsa_switch *ds,
 int mv88e6xxx_rmu_get_id(struct mv88e6xxx_chip *chip);
 int mv88e6xxx_detect_rmu_only(struct mv88e6xxx_chip *chip);
 int mv88e6xxx_rmu_only_early_setup(struct mv88e6xxx_chip *chip);
+int mv88e6xxx_rmu_atu_mac_data_read(struct mv88e6xxx_chip *chip,
+				    struct mv88e6xxx_atu_entry *entry);
+int mv88e6xxx_rmu_atu_mac_data_write(struct mv88e6xxx_chip *chip,
+				     const struct mv88e6xxx_atu_entry *entry);
 
 static inline bool
 mv88e6xxx_is_rmu_only_cpu_port(struct mv88e6xxx_chip *chip, int port)
