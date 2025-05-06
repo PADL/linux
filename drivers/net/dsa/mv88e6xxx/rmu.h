@@ -73,7 +73,7 @@ struct mv88e6xxx_rmu_mib_resp {
 	__be32 timestamp;
 	__be32 bank0[32];
 	__be16 port[6];
-};
+} __packed;
 
 int mv88e6xxx_rmu_stats(struct mv88e6xxx_chip *chip, int port,
 			uint64_t *data,
