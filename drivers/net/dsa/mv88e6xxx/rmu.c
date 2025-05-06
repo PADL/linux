@@ -438,6 +438,146 @@ int mv88e6xxx_rmu_wait_bit(struct mv88e6xxx_chip *chip, int addr, int reg,
 	return 0;
 }
 
+int mv88e6xxx_rmu_atu_mac_data_write(struct mv88e6xxx_chip *chip,
+				     const struct mv88e6xxx_atu_entry *entry)
+{
+	struct mv88e6xxx_rmu_rw_mac_data_resp req, resp;
+	ktime_t start;
+	u16 data;
+	int resp_len;
+	int ret;
+
+	if (chip->rmu_state == MV88E6XXX_RMU_DISABLED ||
+	    (chip->rmu_flags & MV88E6XXX_RMU_IS_SLOW))
+		return -EOPNOTSUPP;
+
+	memset(&req, 0, sizeof(req));
+
+	req.rmu_header.format = MV88E6XXX_RMU_REQ_FORMAT_SOHO;
+	req.rmu_header.prodnr = MV88E6XXX_RMU_REQ_PAD;
+	req.rmu_header.code = MV88E6XXX_RMU_REQ_CODE_REG_RW;
+
+	data = mv88e6xxx_g1_atu_entry_to_data(chip, entry);
+
+	req.mac[0].cmd = MV88E6XXX_RMU_REQ_RW_0_WRITE(chip->info->global1_addr,
+						      MV88E6XXX_G1_ATU_MAC01);
+	req.mac[0].value = htons((entry->mac[0] << 8) | entry->mac[1]);
+	req.mac[1].cmd = MV88E6XXX_RMU_REQ_RW_0_WRITE(chip->info->global1_addr,
+						      MV88E6XXX_G1_ATU_MAC23);
+	req.mac[1].value = htons((entry->mac[2] << 8) | entry->mac[3]);
+	req.mac[2].cmd = MV88E6XXX_RMU_REQ_RW_0_WRITE(chip->info->global1_addr,
+						      MV88E6XXX_G1_ATU_MAC45);
+	req.mac[2].value = htons((entry->mac[4] << 8) | entry->mac[5]);
+
+	req.data.cmd = MV88E6XXX_RMU_REQ_RW_0_WRITE(chip->info->global1_addr,
+						    MV88E6XXX_G1_ATU_DATA);
+	req.data.value = htons(data);
+
+	req.end.cmd = MV88E6XXX_RMU_REQ_RW_0_END;
+	req.end.value = MV88E6XXX_RMU_REQ_RW_1_END;
+
+	start = ktime_get();
+
+	resp_len = sizeof(resp);
+	ret = mv88e6xxx_rmu_request(chip, &req, sizeof(req),
+				    &resp, resp_len,
+				    MV88E6XXX_RMU_REQUEST_TIMEOUT_MS);
+	if (ret < 0) {
+		dev_dbg(chip->dev, "RMU: error for command REQ_RW:MAC_DATA_WRITE %pe ",
+			ERR_PTR(ret));
+		return ret;
+	}
+
+	if (ret < resp_len) {
+		dev_err(chip->dev, "RMU: write MAC DATA returned wrong length: rx %d expecting %d\n",
+			ret, resp_len);
+		return -EPROTO;
+	}
+
+	if (resp.rmu_header.code != MV88E6XXX_RMU_RESP_CODE_REG_RW) {
+		dev_err(chip->dev, "RMU: write MAC DATA returned wrong code %d\n",
+			be16_to_cpu(resp.rmu_header.code));
+		return -EPROTO;
+	}
+
+	return 0;
+}
+
+int mv88e6xxx_rmu_atu_mac_data_read(struct mv88e6xxx_chip *chip,
+				    struct mv88e6xxx_atu_entry *entry)
+{
+	struct mv88e6xxx_rmu_rw_mac_data_resp req, resp;
+	ktime_t start;
+	int resp_len;
+	u16 tmp;
+	int ret;
+
+	if (chip->rmu_state == MV88E6XXX_RMU_DISABLED ||
+	    (chip->rmu_flags & MV88E6XXX_RMU_IS_SLOW))
+		return -EOPNOTSUPP;
+
+	memset(&req, 0, sizeof(req));
+
+	req.rmu_header.format = MV88E6XXX_RMU_REQ_FORMAT_SOHO;
+	req.rmu_header.prodnr = MV88E6XXX_RMU_REQ_PAD;
+	req.rmu_header.code = MV88E6XXX_RMU_REQ_CODE_REG_RW;
+
+	req.mac[0].cmd = MV88E6XXX_RMU_REQ_RW_0_READ(chip->info->global1_addr,
+						     MV88E6XXX_G1_ATU_MAC01);
+	req.mac[1].cmd = MV88E6XXX_RMU_REQ_RW_0_READ(chip->info->global1_addr,
+						     MV88E6XXX_G1_ATU_MAC23);
+	req.mac[2].cmd = MV88E6XXX_RMU_REQ_RW_0_READ(chip->info->global1_addr,
+						     MV88E6XXX_G1_ATU_MAC45);
+
+	req.data.cmd = MV88E6XXX_RMU_REQ_RW_0_READ(chip->info->global1_addr,
+						   MV88E6XXX_G1_ATU_DATA);
+
+	req.end.cmd = MV88E6XXX_RMU_REQ_RW_0_END;
+	req.end.value = MV88E6XXX_RMU_REQ_RW_1_END;
+
+	start = ktime_get();
+
+	resp_len = sizeof(resp);
+	ret = mv88e6xxx_rmu_request(chip, &req, sizeof(req),
+				    &resp, resp_len,
+				    MV88E6XXX_RMU_REQUEST_TIMEOUT_MS);
+	if (ret < 0) {
+		dev_dbg(chip->dev, "RMU: error for command REQ_RW:MAC_DATA_READ %pe ",
+			ERR_PTR(ret));
+		return ret;
+	}
+
+	if (ret < resp_len) {
+		dev_err(chip->dev, "RMU: read MAC DATA returned wrong length: rx %d expecting %d\n",
+			ret, resp_len);
+		return -EPROTO;
+	}
+
+	if (resp.rmu_header.code != MV88E6XXX_RMU_RESP_CODE_REG_RW) {
+		dev_err(chip->dev, "RMU: read MAC DATA returned wrong code %d\n",
+			be16_to_cpu(resp.rmu_header.code));
+		return -EPROTO;
+	}
+
+	mv88e6xxx_rmu_read_latency(chip, ktime_get() - start);
+
+	tmp = ntohs(resp.mac[0].value);
+	entry->mac[0] = tmp >> 8;
+	entry->mac[1] = tmp & 0xff;
+
+	tmp = ntohs(resp.mac[1].value);
+	entry->mac[2] = tmp >> 8;
+	entry->mac[3] = tmp & 0xff;
+
+	tmp = ntohs(resp.mac[2].value);
+	entry->mac[4] = tmp >> 8;
+	entry->mac[5] = tmp & 0xff;
+
+	mv88e6xxx_g1_atu_data_to_entry(chip, ntohs(resp.data.value), entry);
+
+	return 0;
+}
+
 static int mv88e6xxx_rmu_get_id(struct mv88e6xxx_chip *chip)
 {
 	const __be16 req[4] = {
