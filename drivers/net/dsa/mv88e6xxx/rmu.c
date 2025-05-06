@@ -319,7 +319,7 @@ int mv88e6xxx_rmu_read(struct mv88e6xxx_chip *chip, int addr, int reg,
 	    (chip->rmu_flags & MV88E6XXX_RMU_IS_SLOW))
 		return -EOPNOTSUPP;
 
-	 start = ktime_get();
+	start = ktime_get();
 
 	resp_len = sizeof(resp);
 	ret = mv88e6xxx_rmu_request(chip, req, sizeof(req),
