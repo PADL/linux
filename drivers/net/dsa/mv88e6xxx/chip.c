@@ -2943,7 +2943,9 @@ static int mv88e6xxx_port_db_dump_fid(struct mv88e6xxx_chip *chip,
 			continue;
 
 		is_static = (addr.state ==
-			     MV88E6XXX_G1_ATU_DATA_STATE_UC_STATIC);
+			     MV88E6XXX_G1_ATU_DATA_STATE_UC_STATIC ||
+			     addr.state ==
+			     MV88E6XXX_G1_ATU_DATA_STATE_UC_STATIC_AVB_NRL);
 		err = cb(addr.mac, vid, is_static, data);
 		if (err)
 			return err;
