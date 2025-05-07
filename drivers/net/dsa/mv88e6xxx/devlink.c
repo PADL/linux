@@ -6,6 +6,7 @@
 #include "global1.h"
 #include "global2.h"
 #include "port.h"
+#include "rmu.h"
 
 static int mv88e6xxx_atu_get_hash(struct mv88e6xxx_chip *chip, u8 *hash)
 {
@@ -306,16 +307,6 @@ out:
  * mv88e6xxx generations
  */
 
-struct mv88e6xxx_devlink_atu_entry {
-	/* The FID is scattered over multiple registers. */
-	u16 fid;
-	u16 atu_op;
-	u16 atu_data;
-	u16 atu_01;
-	u16 atu_23;
-	u16 atu_45;
-};
-
 static int mv88e6xxx_region_atu_snapshot_fid(struct mv88e6xxx_chip *chip,
 					     int fid,
 					     struct mv88e6xxx_devlink_atu_entry *table,
@@ -368,6 +359,33 @@ static int mv88e6xxx_region_atu_snapshot_fid(struct mv88e6xxx_chip *chip,
 	return 0;
 }
 
+static int mv88e6xxx_region_atu_snapshot_rmu(struct mv88e6xxx_chip *chip,
+					     struct mv88e6xxx_devlink_atu_entry *table,
+					     int *count)
+{
+	unsigned int num_databases = mv88e6xxx_num_databases(chip);
+	u16 cont_code = 0;
+	int err;
+
+	do {
+		if (*count + MV88E6XXX_RMU_MAX_ATU_ENTRIES > num_databases) {
+			err = -ERANGE;
+			break;
+		}
+
+		err = mv88e6xxx_rmu_dump_atu(chip, &table[*count], &cont_code);
+		if (err < 0)
+			break;
+
+		*count += err;
+	} while (cont_code != 0);
+
+	if (err < 0)
+		*count = 0;
+
+	return err;
+}
+
 static int mv88e6xxx_region_atu_snapshot(struct devlink *dl,
 					 const struct devlink_region_ops *ops,
 					 struct netlink_ext_ack *extack,
@@ -391,18 +409,26 @@ static int mv88e6xxx_region_atu_snapshot(struct devlink *dl,
 
 	mv88e6xxx_reg_lock(chip);
 
-	while (1) {
-		fid = find_next_bit(chip->fid_bitmap, MV88E6XXX_N_FID, fid + 1);
-		if (fid == MV88E6XXX_N_FID)
-			break;
+	err = mv88e6xxx_region_atu_snapshot_rmu(chip, table, &count);
+	if (!mv88e6xxx_rmu_can_mdio_fallback(chip, err)) {
+		kfree(table);
+		goto out;
+	} else if (err) {
+		while (1) {
+			fid = find_next_bit(chip->fid_bitmap, MV88E6XXX_N_FID,
+					    fid + 1);
+			if (fid == MV88E6XXX_N_FID)
+				break;
 
-		err =  mv88e6xxx_region_atu_snapshot_fid(chip, fid, table,
-							 &count);
-		if (err) {
-			kfree(table);
-			goto out;
+			err =  mv88e6xxx_region_atu_snapshot_fid(chip, fid,
+								 table, &count);
+			if (err) {
+				kfree(table);
+				goto out;
+			}
 		}
 	}
+
 	*data = (u8 *)table;
 out:
 	mv88e6xxx_reg_unlock(chip);
