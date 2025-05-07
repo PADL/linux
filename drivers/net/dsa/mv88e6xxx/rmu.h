@@ -17,6 +17,7 @@
 #define MV88E6XXX_RMU_REQ_FORMAT_SOHO		htons(0x0001)
 #define MV88E6XXX_RMU_REQ_PAD			htons(0x0000)
 #define MV88E6XXX_RMU_REQ_CODE_GET_ID		htons(0x0000)
+#define MV88E6XXX_RMU_REQ_CODE_ATU		htons(0x1000)
 #define MV88E6XXX_RMU_REQ_CODE_MIB		htons(0x1020)
 #define MV88E6XXX_RMU_REQ_CODE_REG_RW		htons(0x2000)
 #define MV88E6XXX_RMU_REQ_DATA			htons(0x0000)
@@ -50,6 +51,7 @@
 #define MV88E6XXX_RMU_RESP_FORMAT_1		htons(0x0001)
 #define MV88E6XXX_RMU_RESP_FORMAT_2		htons(0x0002)
 #define MV88E6XXX_RMU_RESP_CODE_GOT_ID		htons(0x0000)
+#define MV88E6XXX_RMU_RESP_CODE_ATU		htons(0x1000)
 #define MV88E6XXX_RMU_RESP_CODE_MIB		htons(0x1020)
 #define MV88E6XXX_RMU_RESP_CODE_REG_RW		htons(0x2000)
 
@@ -79,6 +81,34 @@ struct mv88e6xxx_rmu_rw_mac_data_resp {
 	struct mv88e6xxx_rmu_rw_command end;
 } __packed;
 
+struct mv88e6xxx_rmu_atu_entry {
+	__be16 state_trunk_dpv;
+	__be16 atu_01;
+	__be16 atu_23;
+	__be16 atu_45;
+	__be16 pri_fid;
+} __packed;
+
+#define MV88E6XXX_RMU_MAX_ATU_ENTRIES		48
+
+#define MV88E6XXX_RMU_ATU_ENTRY_STATE_MASK	GENMASK(15, 12)
+#define MV88E6XXX_RMU_ATU_ENTRY_STATE_GET(p)	FIELD_GET(MV88E6XXX_RMU_ATU_ENTRY_STATE_MASK, p)
+#define MV88E6XXX_RMU_ATU_TRUNK			0x0800
+#define MV88E6XXX_RMU_ATU_DPV_MASK		GENMASK(10, 0)
+#define MV88E6XXX_RMU_ATU_DPV_GET(p)		FIELD_GET(MV88E6XXX_RMU_ATU_DPV_MASK, p)
+
+#define MV88E6XXX_RMU_ATU_PRI_MASK		GENMASK(14, 12)
+#define MV88E6XXX_RMU_ATU_PRI_GET(p)		FIELD_GET(MV88E6XXX_RMU_ATU_PRI_MASK, p)
+
+#define MV88E6XXX_RMU_ATU_FID_MASK		GENMASK(11, 0)
+#define MV88E6XXX_RMU_ATU_FID_GET(p)		FIELD_GET(MV88E6XXX_RMU_ATU_FID_MASK, p)
+
+struct mv88e6xxx_rmu_atu_resp {
+	struct mv88e6xxx_rmu_header rmu_header;
+	struct mv88e6xxx_rmu_atu_entry entries[MV88E6XXX_RMU_MAX_ATU_ENTRIES];
+	__be16 cont_code;
+} __packed;
+
 struct mv88e6xxx_rmu_mib_resp {
 	struct mv88e6xxx_rmu_header rmu_header;
 	__be16 swport;
@@ -87,6 +117,9 @@ struct mv88e6xxx_rmu_mib_resp {
 	__be16 port[6];
 } __packed;
 
+int mv88e6xxx_rmu_dump_atu(struct mv88e6xxx_chip *chip,
+			   struct mv88e6xxx_devlink_atu_entry *entries,
+			   u16 *cont_code);
 int mv88e6xxx_rmu_stats(struct mv88e6xxx_chip *chip, int port,
 			uint64_t *data,
 			const struct mv88e6xxx_hw_stat *hw_stats,
