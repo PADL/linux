@@ -238,11 +238,7 @@ static int mv88e6xxx_g1_atu_data_read(struct mv88e6xxx_chip *chip,
 	if (err)
 		return err;
 
-	entry->state = val & 0xf;
-	if (entry->state) {
-		entry->trunk = !!(val & MV88E6XXX_G1_ATU_DATA_TRUNK);
-		entry->portvec = (val >> 4) & mv88e6xxx_port_mask(chip);
-	}
+	mv88e6xxx_g1_atu_data_to_entry(chip, val, entry);
 
 	return 0;
 }
@@ -250,14 +246,7 @@ static int mv88e6xxx_g1_atu_data_read(struct mv88e6xxx_chip *chip,
 static int mv88e6xxx_g1_atu_data_write(struct mv88e6xxx_chip *chip,
 				       struct mv88e6xxx_atu_entry *entry)
 {
-	u16 data = entry->state & 0xf;
-
-	if (entry->state) {
-		if (entry->trunk)
-			data |= MV88E6XXX_G1_ATU_DATA_TRUNK;
-
-		data |= (entry->portvec & mv88e6xxx_port_mask(chip)) << 4;
-	}
+	u16 data = mv88e6xxx_g1_atu_entry_to_data(chip, entry);
 
 	return mv88e6xxx_g1_write(chip, MV88E6XXX_G1_ATU_DATA, data);
 }
