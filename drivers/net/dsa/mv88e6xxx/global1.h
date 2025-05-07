@@ -413,4 +413,30 @@ int mv88e6xxx_g1_vtu_prob_irq_setup(struct mv88e6xxx_chip *chip);
 void mv88e6xxx_g1_vtu_prob_irq_free(struct mv88e6xxx_chip *chip);
 int mv88e6xxx_g1_atu_get_next(struct mv88e6xxx_chip *chip, u16 fid);
 
+static inline u16 mv88e6xxx_g1_atu_entry_to_data(struct mv88e6xxx_chip *chip,
+						 const struct mv88e6xxx_atu_entry *entry)
+{
+	u16 data = entry->state & 0xf;
+
+	if (entry->state) {
+		if (entry->trunk)
+			data |= MV88E6XXX_G1_ATU_DATA_TRUNK;
+
+		data |= (entry->portvec & mv88e6xxx_port_mask(chip)) << 4;
+	}
+
+	return data;
+}
+
+static inline void mv88e6xxx_g1_atu_data_to_entry(struct mv88e6xxx_chip *chip,
+						  u16 data,
+						  struct mv88e6xxx_atu_entry *entry)
+{
+	entry->state = data & 0xf;
+	if (entry->state) {
+		entry->trunk = !!(data & MV88E6XXX_G1_ATU_DATA_TRUNK);
+		entry->portvec = (data >> 4) & mv88e6xxx_port_mask(chip);
+	}
+}
+
 #endif /* _MV88E6XXX_GLOBAL1_H */
