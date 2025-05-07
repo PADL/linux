@@ -156,6 +156,77 @@ static int mv88e6xxx_rmu_request(struct mv88e6xxx_chip *chip,
 					     timeout_ms);
 }
 
+int mv88e6xxx_rmu_dump_atu(struct mv88e6xxx_chip *chip,
+			   struct mv88e6xxx_devlink_atu_entry *entries,
+			   u16 *cont_code)
+{
+	__be16 req[] = {
+		MV88E6XXX_RMU_REQ_FORMAT_SOHO,
+		MV88E6XXX_RMU_REQ_PAD,
+		MV88E6XXX_RMU_REQ_CODE_ATU,
+		htons(*cont_code),
+	};
+	struct mv88e6xxx_rmu_atu_resp resp;
+	int resp_len, count;
+	int ret, i;
+
+	if (chip->rmu_state == MV88E6XXX_RMU_DISABLED)
+		return -EOPNOTSUPP;
+
+	resp_len = sizeof(resp);
+	ret = mv88e6xxx_rmu_request(chip, req, sizeof(req),
+				    &resp, resp_len,
+				    MV88E6XXX_RMU_REQUEST_TIMEOUT_MS);
+	if (ret < 0) {
+		dev_dbg(chip->dev, "RMU: error for command DUMP_ATU %pe\n",
+			ERR_PTR(ret));
+		return ret;
+	}
+
+	/* minimum packet length */
+	resp_len = sizeof(struct mv88e6xxx_rmu_header) + sizeof(__be16); /* cont_code */
+
+	if (ret < resp_len || (ret - resp_len) % sizeof(struct mv88e6xxx_rmu_atu_entry)) {
+		dev_err(chip->dev, "RMU: DUMP_ATU returned wrong length: rx %d expecting %zd\n",
+			ret, sizeof(resp));
+		return -EPROTO;
+	}
+
+	count = (ret - resp_len) / sizeof(struct mv88e6xxx_rmu_atu_entry);
+
+	if (resp.rmu_header.code != MV88E6XXX_RMU_RESP_CODE_ATU) {
+		dev_err(chip->dev, "RMU: DUMP_ATU returned wrong code %d\n",
+			be16_to_cpu(resp.rmu_header.code));
+		return -EPROTO;
+	}
+
+	for (i = 0; i < count; i++) {
+		const struct mv88e6xxx_rmu_atu_entry *src = &resp.entries[i];
+		struct mv88e6xxx_devlink_atu_entry *dst = &entries[i];
+		u16 tmp;
+
+		tmp = ntohs(src->pri_fid);
+		dst->fid = MV88E6XXX_RMU_ATU_FID_GET(tmp);
+		dst->atu_op = MV88E6XXX_G1_ATU_OP_GET_NEXT_DB;
+
+		tmp = ntohs(src->state_trunk_dpv);
+		dst->atu_data = MV88E6XXX_RMU_ATU_ENTRY_STATE_GET(tmp) & 0xf;
+		if (tmp & MV88E6XXX_RMU_ATU_TRUNK)
+			dst->atu_data |= MV88E6XXX_G1_ATU_DATA_TRUNK;
+		dst->atu_data |= (MV88E6XXX_RMU_ATU_DPV_GET(tmp) &
+				  mv88e6xxx_port_mask(chip)) << 4;
+
+		dst->atu_01 = ntohs(src->atu_01);
+		dst->atu_23 = ntohs(src->atu_23);
+		dst->atu_45 = ntohs(src->atu_45);
+	}
+
+	/* the continuation code will be stored in the u16 one past the last entry */
+	*cont_code = ntohs(resp.entries[count].state_trunk_dpv);
+
+	return i;
+}
+
 int mv88e6xxx_rmu_stats(struct mv88e6xxx_chip *chip, int port,
 			uint64_t *data,
 			const struct mv88e6xxx_hw_stat *hw_stats,
