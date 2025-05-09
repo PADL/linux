@@ -273,7 +273,7 @@ int mv88e6xxx_g1_vtu_getnext(struct mv88e6xxx_chip *chip,
 	 * To save a few hardware accesses and abstract this to the caller,
 	 * write the VID only once, when the entry is given as invalid.
 	 */
-	if (!entry->valid) {
+	if (!entry->valid || chip->rmu_state != MV88E6XXX_RMU_DISABLED) {
 		err = mv88e6xxx_g1_vtu_vid_write(chip, false, entry->vid);
 		if (err)
 			return err;
