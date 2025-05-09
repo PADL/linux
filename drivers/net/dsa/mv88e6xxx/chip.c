@@ -49,10 +49,14 @@
 
 static void assert_reg_lock(struct mv88e6xxx_chip *chip)
 {
+#ifdef CONFIG_LOCKDEP
+	lockdep_assert_held(&chip->reg_lock);
+#else
 	if (unlikely(!mutex_is_locked(&chip->reg_lock))) {
 		dev_err(chip->dev, "Switch registers lock not held!\n");
 		dump_stack();
 	}
+#endif
 }
 
 int mv88e6xxx_read(struct mv88e6xxx_chip *chip, int addr, int reg, u16 *val)
