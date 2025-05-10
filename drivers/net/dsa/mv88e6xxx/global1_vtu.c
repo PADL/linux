@@ -499,7 +499,7 @@ int mv88e6xxx_g1_stu_getnext(struct mv88e6xxx_chip *chip,
 	 * To save a few hardware accesses and abstract this to the caller,
 	 * write the SID only once, when the entry is given as invalid.
 	 */
-	if (!entry->valid) {
+	if (!entry->valid || chip->rmu_state != MV88E6XXX_RMU_DISABLED) {
 		err = mv88e6xxx_g1_vtu_sid_write(chip, entry->sid);
 		if (err)
 			return err;
