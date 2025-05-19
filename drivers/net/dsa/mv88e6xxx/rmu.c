@@ -803,6 +803,7 @@ int mv88e6xxx_detect_rmu_only(struct mv88e6xxx_chip *chip)
 {
 	struct device_node *dn = chip->dev->of_node;
 	struct net_device *conduit;
+	u32 tag_protocol;
 	bool admin_up;
 	int err;
 
@@ -812,11 +813,16 @@ int mv88e6xxx_detect_rmu_only(struct mv88e6xxx_chip *chip)
 		return -ENODEV;
 	}
 
+	if (of_property_read_u32(dn, "marvell,mv88e6xxx-dsa-tag-protocol", &tag_protocol) < 0) {
+		tag_protocol = DSA_TAG_PROTO_EDSA;
+	} else if (tag_protocol != DSA_TAG_PROTO_DSA && tag_protocol != DSA_TAG_PROTO_EDSA) {
+		dev_err(chip->dev, "RMU: unsupported DSA tag protocol %d\n", tag_protocol);
+		return -EINVAL;
+	}
+
 	err = __mv88e6xxx_get_conduit_rmu_only(chip, dn, &conduit);
 	if (err)
 		return -EPROBE_DEFER;
-
-	/* TODO: support specifying dsa-tag-protocol in device tree */
 
 	dev_info(chip->dev, "RMU: RMU-only mode enabled on conduit device %s\n", conduit->name);
 
@@ -827,7 +833,7 @@ int mv88e6xxx_detect_rmu_only(struct mv88e6xxx_chip *chip)
 		return -EPROBE_DEFER;
 	}
 
-	chip->tag_protocol = DSA_TAG_PROTO_EDSA;
+	chip->tag_protocol = tag_protocol;
 	chip->rmu_conduit = conduit;
 	chip->rmu_state = MV88E6XXX_RMU_ONLY_ENABLED;
 
