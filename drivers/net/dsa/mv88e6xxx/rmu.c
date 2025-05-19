@@ -91,7 +91,7 @@ static int mv88e6xxx_dsa_inband_request_retry(struct mv88e6xxx_chip *chip,
 		 chip->rmu_state == MV88E6XXX_RMU_ONLY_ENABLED &&
 		 time_is_before_jiffies(retry_timeout));
 
-	kfree_skb(skb);
+	dev_kfree_skb_any(skb);
 
 	return err;
 }
