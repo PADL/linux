@@ -209,10 +209,10 @@ static struct sk_buff *dsa_rcv_ll(struct sk_buff *skb, struct net_device *dev,
 	enum dsa_cmd cmd;
 	u8 *dsa_header;
 
-	ds = dsa_master_find_switch(dev, source_device);
 	/* The ethertype field is part of the DSA header. */
 	dsa_header = dsa_etype_header_pos_rx(skb);
 	source_device = dsa_header[0] & 0x1f;
+	ds = dsa_master_find_switch(dev, source_device);
 
 	cmd = dsa_header[0] >> 6;
 	switch (cmd) {
