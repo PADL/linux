@@ -1164,6 +1164,10 @@ static int dsa_port_parse_cpu(struct dsa_port *dp, struct net_device *conduit,
 	struct dsa_switch_tree *dst = ds->dst;
 	enum dsa_tag_protocol default_proto;
 
+	/* Avoid crash if we are interrupted by dsa_switch_rcv() */
+	conduit->dsa_ptr = NULL;
+	wmb();
+
 	/* Find out which protocol the switch would prefer. */
 	default_proto = dsa_get_tag_protocol(dp, conduit);
 	if (dst->default_proto) {
@@ -1634,8 +1638,10 @@ void dsa_switch_shutdown(struct dsa_switch *ds)
 	/* Disconnect from further netdevice notifiers on the conduit,
 	 * since netdev_uses_dsa() will now return false.
 	 */
-	dsa_switch_for_each_cpu_port(dp, ds)
+	dsa_switch_for_each_cpu_port(dp, ds) {
 		dp->conduit->dsa_ptr = NULL;
+		wmb();
+	}
 
 	rtnl_unlock();
 out:
