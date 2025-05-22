@@ -2578,6 +2578,42 @@ static int mv88e6xxx_broadcast_setup(struct mv88e6xxx_chip *chip, u16 vid)
 	return 0;
 }
 
+static const u8 mv88e6xxx_ptpv1_mcast_addrs[][ETH_ALEN] = {
+	/* 239.254.1.1 */
+	{ 0x01, 0x00, 0x5e, 0x7e, 0x01, 0x01 },
+	/* 239.254.3.3 */
+	{ 0x01, 0x00, 0x5e, 0x7e, 0x03, 0x03 },
+	/* 224.0.1.129 */
+	{ 0x01, 0x00, 0x5e, 0x00, 0x01, 0x81 },
+	/* 224.0.1.130 */
+	{ 0x01, 0x00, 0x5e, 0x00, 0x01, 0x82 },
+	/* 224.0.1.131 */
+	{ 0x01, 0x00, 0x5e, 0x00, 0x01, 0x83 },
+	/* 224.0.1.132 */
+	{ 0x01, 0x00, 0x5e, 0x00, 0x01, 0x84 },
+};
+
+static int mv88e6xxx_port_ptpv1_setup(struct mv88e6xxx_chip *chip,
+				      int port, u16 vid)
+{
+	int i, err;
+
+	for (i = 0; i < ARRAY_SIZE(mv88e6xxx_ptpv1_mcast_addrs); i++) {
+		const u8 *mac = mv88e6xxx_ptpv1_mcast_addrs[i];
+
+		err = mv88e6xxx_port_db_load_purge(chip, port, mac, vid,
+			MV88E6XXX_G1_ATU_DATA_STATE_MC_STATIC);
+		if (err) {
+			dev_err(chip->ds->dev,
+				"p%d: failed to add static MC entry for %02x:%02x:%02x:%02x:%02x:%02x: %d\n",
+				port, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], err);
+			break;
+		}
+	}
+
+	return err;
+}
+
 struct mv88e6xxx_port_broadcast_sync_ctx {
 	int port;
 	bool flood;
@@ -3666,6 +3702,10 @@ static int mv88e6xxx_setup_port(struct mv88e6xxx_chip *chip, int port)
 		return err;
 
 	err = mv88e6xxx_port_vlan_map(chip, port);
+	if (err)
+		return err;
+
+	err = mv88e6xxx_port_ptpv1_setup(chip, port, MV88E6XXX_VID_BRIDGED);
 	if (err)
 		return err;
 
