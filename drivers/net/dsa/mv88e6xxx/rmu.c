@@ -818,8 +818,6 @@ int mv88e6xxx_detect_rmu_only(struct mv88e6xxx_chip *chip)
 
 	/* TODO: support specifying dsa-tag-protocol in device tree */
 
-	dev_info(chip->dev, "RMU: RMU-only mode enabled on conduit device %s\n", conduit->name);
-
 	admin_up = (conduit->flags & IFF_UP) && !qdisc_tx_is_noop(conduit);
 	if (!admin_up) {
 		dev_warn(chip->dev, "RMU: conduit device %s is not administratively up\n",
