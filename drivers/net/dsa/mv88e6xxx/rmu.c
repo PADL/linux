@@ -820,8 +820,8 @@ int mv88e6xxx_detect_rmu_only(struct mv88e6xxx_chip *chip)
 
 	admin_up = (conduit->flags & IFF_UP) && !qdisc_tx_is_noop(conduit);
 	if (!admin_up) {
-		dev_warn(chip->dev, "RMU: conduit device %s is not administratively up\n",
-			 conduit->name);
+		dev_dbg(chip->dev, "RMU: conduit device %s is not administratively up\n",
+			conduit->name);
 		return -EPROBE_DEFER;
 	}
 
@@ -871,7 +871,7 @@ int mv88e6xxx_rmu_only_early_setup(struct mv88e6xxx_chip *chip)
 	struct dsa_port *cpu_dp;
 	int err;
 
-	/* TODO: move early setup into DSA */
+	/* TODO: move early setup into DSA (also call disconnect_tag_protocol) */
 
 	rtnl_lock();
 
