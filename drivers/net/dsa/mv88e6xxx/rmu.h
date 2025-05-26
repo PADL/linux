@@ -136,9 +136,7 @@ void mv88e6xxx_rmu_conduit_state_change(struct dsa_switch *ds,
 void mv88e6xxx_rmu_frame2reg_handler(struct dsa_switch *ds,
 				     struct sk_buff *skb,
 				     u8 seqno);
-int mv88e6xxx_rmu_get_id(struct mv88e6xxx_chip *chip);
 int mv88e6xxx_detect_rmu_only(struct mv88e6xxx_chip *chip);
-int mv88e6xxx_rmu_only_early_setup(struct mv88e6xxx_chip *chip);
 int mv88e6xxx_rmu_atu_mac_data_read(struct mv88e6xxx_chip *chip,
 				    struct mv88e6xxx_atu_entry *entry);
 int mv88e6xxx_rmu_atu_mac_data_write(struct mv88e6xxx_chip *chip,

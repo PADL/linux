@@ -8,8 +8,6 @@
  */
 
 #include <linux/dsa/mv88e6xxx.h>
-#include <linux/of.h>
-#include <linux/of_net.h>
 #include <net/dsa.h>
 #include "chip.h"
 #include "global1.h"
@@ -65,21 +63,28 @@ static void mv88e6xxx_rmu_fill_seqno_dsa(struct sk_buff *skb, u32 seqno)
 	mv88e6xxx_rmu_fill_seqno(skb, seqno, ETH_ALEN * 2);
 }
 
+static bool mv88e6xxx_rmu_only_timeout(struct mv88e6xxx_chip *chip, int err)
+{
+	return err == -ETIMEDOUT &&
+		chip->rmu_state == MV88E6XXX_RMU_ONLY_ENABLED;
+}
+
 static int mv88e6xxx_dsa_inband_request_retry(struct mv88e6xxx_chip *chip,
 					      struct sk_buff *skb, bool edsa,
 					      void *resp, unsigned int resp_len,
 					      int timeout_ms)
 {
+	bool setup = chip->ds->dst->setup;
 	unsigned long retry_timeout;
 	int err;
 
 	if (chip->rmu_state == MV88E6XXX_RMU_ONLY_ENABLED) {
-		retry_timeout = jiffies +
-			msecs_to_jiffies(MV88E6XXX_RMU_RETRY_TIMEOUT_MS);
+		int ms = MV88E6XXX_RMU_RETRY_TIMEOUT_MS;
 
-		/* delay retry timeout whilst booting */
-		if (!chip->ds->dst->setup)
-			retry_timeout *= 10;
+		if (!setup)
+			ms *= 10;
+
+		retry_timeout = jiffies + msecs_to_jiffies(ms);
 	}
 
 	do {
@@ -87,11 +92,15 @@ static int mv88e6xxx_dsa_inband_request_retry(struct mv88e6xxx_chip *chip,
 					 (edsa ? mv88e6xxx_rmu_fill_seqno_edsa :
 					  mv88e6xxx_rmu_fill_seqno_dsa),
 					 resp, resp_len, timeout_ms);
-	} while (err == -ETIMEDOUT &&
-		 chip->rmu_state == MV88E6XXX_RMU_ONLY_ENABLED &&
+	} while (mv88e6xxx_rmu_only_timeout(chip, err) &&
 		 time_is_before_jiffies(retry_timeout));
 
 	dev_kfree_skb_any(skb);
+
+	if (mv88e6xxx_rmu_only_timeout(chip, err) && !setup) {
+		dev_info(chip->dev, "RMU: request timed out during switch setup, deferring\n");
+		err = -EPROBE_DEFER;
+	}
 
 	return err;
 }
@@ -607,7 +616,7 @@ int mv88e6xxx_rmu_atu_mac_data_read(struct mv88e6xxx_chip *chip,
 	return 0;
 }
 
-int mv88e6xxx_rmu_get_id(struct mv88e6xxx_chip *chip)
+static int mv88e6xxx_rmu_get_id(struct mv88e6xxx_chip *chip)
 {
 	const __be16 req[4] = {
 		MV88E6XXX_RMU_REQ_FORMAT_GET_ID,
@@ -749,162 +758,47 @@ drop:
 	return;
 }
 
-static int __mv88e6xxx_get_conduit_rmu_only(struct mv88e6xxx_chip *chip,
-					    struct device_node *dn,
-					    struct net_device **conduit)
-{
-	struct device_node *ethernet = NULL;
-	struct device_node *ports, *port;
-	u32 reg;
-
-	*conduit = NULL;
-
-	ports = of_get_child_by_name(dn, "ports");
-	if (!ports) {
-		ports = of_get_child_by_name(dn, "ethernet-ports");
-		if (!ports)
-			return -EINVAL;
-	}
-
-	for_each_available_child_of_node(ports, port) {
-		const char *label;
-		int err;
-
-		label = of_get_property(port, "label", NULL);
-		if (!label || strcmp(label, "cpu") != 0)
-			continue;
-
-		err = of_property_read_u32(port, "reg", &reg);
-		if (err)
-			continue;
-
-		ethernet = of_parse_phandle(port, "ethernet", 0);
-		if (ethernet)
-			break;
-	}
-
-	of_node_put(ports);
-
-	if (!ethernet)
-		return -ENODEV;
-
-	*conduit = of_find_net_device_by_node(ethernet);
-	if (!*conduit) {
-		dev_warn(chip->dev, "RMU: conduit device tree node %s has no associated device\n",
-			 ethernet->name);
-	}
-
-	of_node_put(ethernet);
-
-	return 0;
-}
-
 int mv88e6xxx_detect_rmu_only(struct mv88e6xxx_chip *chip)
 {
-	struct device_node *dn = chip->dev->of_node;
-	struct net_device *conduit;
-	bool admin_up;
 	int err;
 
-	if (mv88e6xxx_rmu_disabled() ||
-	    of_property_read_bool(dn, "marvell,mv88e6xxx-rmu-enabled") == false) {
-		dev_dbg(chip->dev, "RMU disabled and/or marvell,mv88e6xxx-rmu-enabled property absent\n");
+	if (mv88e6xxx_rmu_disabled())
 		return -ENODEV;
-	}
 
-	err = __mv88e6xxx_get_conduit_rmu_only(chip, dn, &conduit);
-	if (err)
-		return -EPROBE_DEFER;
-
-	/* TODO: support specifying dsa-tag-protocol in device tree */
-
-	admin_up = (conduit->flags & IFF_UP) && !qdisc_tx_is_noop(conduit);
-	if (!admin_up) {
-		dev_dbg(chip->dev, "RMU: conduit device %s is not administratively up\n",
-			conduit->name);
-		return -EPROBE_DEFER;
-	}
-
-	chip->tag_protocol = DSA_TAG_PROTO_EDSA;
-	chip->rmu_conduit = conduit;
+	chip->tag_protocol = DSA_TAG_PROTO_EDSA; /* must be set for get_tag_protocol() */
 	chip->rmu_state = MV88E6XXX_RMU_ONLY_ENABLED;
-
-	dsa_inband_init(&chip->rmu_inband, U8_MAX);
 
 	err = mv88e6xxx_register_switch(chip);
 	if (err) {
 		dev_err(chip->dev, "RMU: failed RMU-only mode switch registration: %pe\n",
 			ERR_PTR(err));
-		goto reset_rmu_conf;
+		goto error;
 	}
+
+	BUG_ON(chip->ds == NULL);
 
 	err = mv88e6xxx_rmu_get_id(chip);
 	if (err) {
 		dev_err(chip->dev, "RMU: RMU-only mode validation failed: %pe\n",
 			ERR_PTR(err));
-		goto reset_rmu_conf;
+		goto error;
 	}
 
 	err = mv88e6xxx_detect(chip);
 	if (err)
-		goto reset_rmu_conf;
+		goto error;
 
-	dev_info(chip->dev, "RMU: RMU-only mode enabled on conduit device %s\n", conduit->name);
+	BUG_ON(chip->rmu_conduit == NULL);
+
+	dev_info(chip->dev, "RMU: RMU-only mode enabled on conduit device %s\n",
+		 chip->rmu_conduit->name);
 
 	return 0;
 
-reset_rmu_conf:
-	rtnl_lock();
-	conduit->dsa_ptr = NULL;
-	rtnl_unlock();
-
+error:
 	chip->tag_protocol = DSA_TAG_PROTO_NONE;
 	chip->rmu_conduit = NULL;
 	chip->rmu_state = MV88E6XXX_RMU_DISABLED;
 
 	return err;
-}
-
-int mv88e6xxx_rmu_only_early_setup(struct mv88e6xxx_chip *chip)
-{
-	struct dsa_switch *ds = chip->ds;
-	struct dsa_port *cpu_dp;
-	int err;
-
-	/* TODO: move early setup into DSA (also call disconnect_tag_protocol) */
-
-	rtnl_lock();
-
-	if (ds->dst->tag_ops->connect) {
-		err = ds->dst->tag_ops->connect(ds);
-		if (err)
-			goto unlock;
-	}
-
-	if (ds->ops->connect_tag_protocol) {
-		err = ds->ops->connect_tag_protocol(ds, chip->tag_protocol);
-		if (err)
-			goto unlock;
-	}
-
-	dsa_switch_for_each_cpu_port(cpu_dp, chip->ds) {
-		if (cpu_dp->conduit == chip->rmu_conduit) {
-			wmb();
-			chip->rmu_conduit->dsa_ptr = cpu_dp;
-			cpu_dp->dn = NULL; /* skip link registration */
-			break;
-		}
-	}
-
-	if (chip->rmu_conduit->dsa_ptr == NULL) {
-		err = -ENODEV;
-		goto unlock;
-	}
-
-	err = 0;
-
-unlock:
-	rtnl_unlock();
-
-	return 0;
 }

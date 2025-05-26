@@ -4009,7 +4009,7 @@ static int mv88e6xxx_mdio_register(struct mv88e6xxx_chip *chip,
 
 	err = of_mdiobus_register(bus, np);
 	if (err) {
-		dev_err(chip->dev, "Cannot register MDIO bus (%d)\n", err);
+		dev_err(chip->dev, "Cannot register device node %s (%d) MDIO bus (%d)\n", np->full_name, np->phandle, err);
 		mv88e6xxx_g2_irq_mdio_free(chip, bus);
 		goto out;
 	}
@@ -4098,9 +4098,14 @@ static int mv88e6xxx_setup(struct dsa_switch *ds)
 	chip->ds = ds;
 
 	if (chip->rmu_state == MV88E6XXX_RMU_ONLY_ENABLED) {
-		err = mv88e6xxx_rmu_only_early_setup(chip);
-		if (err)
-			return err;
+		BUG_ON(chip->rmu_conduit != NULL);
+		BUG_ON(!ds->inband_only);
+
+		chip->rmu_conduit = dsa_tree_find_first_conduit(ds->dst);
+		if (chip->rmu_conduit == NULL) {
+			dev_err(chip->dev, "RMU: unable to find switch conduit device\n");
+			return -ENODEV;
+		}
 	}
 
 	err = mv88e6xxx_mdios_register(chip);
@@ -7624,6 +7629,13 @@ int mv88e6xxx_register_switch(struct mv88e6xxx_chip *chip)
 	struct device *dev = chip->dev;
 	struct dsa_switch *ds;
 
+	if (chip->ds) {
+		BUG_ON(!chip->ds->inband_only);
+		return 0;
+	}
+
+	dsa_inband_init(&chip->rmu_inband, U8_MAX);
+
 	ds = devm_kzalloc(dev, sizeof(*ds), GFP_KERNEL);
 	if (!ds)
 		return -ENOMEM;
@@ -7636,6 +7648,12 @@ int mv88e6xxx_register_switch(struct mv88e6xxx_chip *chip)
 	ds->phylink_mac_ops = &mv88e6xxx_phylink_mac_ops;
 	ds->ageing_time_min = chip->info->age_time_coeff;
 	ds->ageing_time_max = chip->info->age_time_coeff * U8_MAX;
+
+	/* inband_only is a hint to dsa_register_switch() to ensure that the
+	 * conduit device is initialized early so the switch can be brought
+	 * up without MDIO.
+	 */
+	ds->inband_only = chip->rmu_state == MV88E6XXX_RMU_ONLY_ENABLED;
 
 	/* Some chips support up to 32, but that requires enabling the
 	 * 5-bit port mode, which we do not support. 640k^W16 ought to
@@ -7819,13 +7837,9 @@ static int mv88e6xxx_probe_common(struct device *dev,
 	if (err)
 		goto out_g1_atu_prob_irq;
 
-	if (!chip->ds) {
-		dsa_inband_init(&chip->rmu_inband, U8_MAX);
-
-		err = mv88e6xxx_register_switch(chip);
-		if (err)
-			goto out_g1_vtu_prob_irq;
-	}
+	err = mv88e6xxx_register_switch(chip);
+	if (err)
+		goto out_g1_vtu_prob_irq;
 
 	return 0;
 
