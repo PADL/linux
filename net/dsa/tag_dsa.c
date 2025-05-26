@@ -263,7 +263,7 @@ static struct sk_buff *dsa_rcv_ll(struct sk_buff *skb, struct net_device *dev,
 	}
 
 	/* whilst setting up switch, RMU is OK but other packets are not */
-	if (ds && !ds->setup)
+	if (ds && !ds->dst->setup)
 		return NULL;
 
 	source_port = (dsa_header[1] >> 3) & 0x1f;
