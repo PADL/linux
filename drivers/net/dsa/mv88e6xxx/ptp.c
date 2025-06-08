@@ -205,6 +205,65 @@ static int mv88e6352_config_eventcap(struct mv88e6xxx_chip *chip, int event,
 	return err;
 }
 
+/* mv88e6352_config_trigger - configure TAI trigger generation
+ * @enable:		whether to enable or disable trigger generation
+ * @one_shot:		one shot mode
+ * @pulse_width:	the pulse width in cycles (valid for one shot mode only)
+ * @triggen_amt:	the period, or PHC ts (for one shot mode)
+ * @trigclk_cmp:	trigger mode clock compensation amount in ps
+ */
+static int mv88e6352_config_trigger(struct mv88e6xxx_chip *chip,
+				    bool enable, bool one_shot,
+				    u8 pulse_width, u32 triggen_amt,
+				    u16 trigclk_cmp)
+{
+	u16 trig_config;
+	u16 global_config;
+	int err;
+
+	/* read existing configuration so as not to disturb pending clock update */
+	err = mv88e6xxx_tai_read(chip, MV88E6XXX_TAI_TRIG_CFG, &trig_config, 1);
+	if (err)
+		return err;
+
+	trig_config &= ~(MV88E6XXX_TAI_TRIG_CFG_PULSE_WIDTH_MASK);
+	if (one_shot)
+		trig_config |= MV88E6XXX_TAI_TRIG_CFG_PULSE_WIDTH_SET(pulse_width);
+	else
+		trig_config |= MV88E6XXX_TAI_TRIG_CFG_PULSE_WIDTH_SET(0xf); /* default */
+
+	err = mv88e6xxx_tai_write(chip, MV88E6XXX_TAI_TRIG_CFG, trig_config);
+	if (err)
+		return err;
+
+	chip->trig_config = enable ? MV88E6XXX_TAI_CFG_TRIG_ENABLE : 0;
+	if (one_shot)
+		chip->trig_config |= MV88E6XXX_TAI_CFG_TRIG_MODE_ONESHOT;
+
+	global_config = (chip->evcap_config | chip->trig_config);
+	err = mv88e6xxx_tai_write(chip, MV88E6XXX_TAI_CFG, global_config);
+	if (err)
+		return err;
+
+	err = mv88e6xxx_tai_write(chip, MV88E6XXX_TAI_TRIG_GEN_AMOUNT_LO,
+				  triggen_amt & 0xffff);
+	if (err)
+		return err;
+
+	err = mv88e6xxx_tai_write(chip, MV88E6XXX_TAI_TRIG_GEN_AMOUNT_HI,
+				  (triggen_amt >> 16) & 0xffff);
+	if (err)
+		return err;
+
+	if (!one_shot) {
+		err = mv88e6xxx_tai_write(chip, MV88E6XXX_TAI_TRIG_CLOCK_COMP, trigclk_cmp);
+		if (err)
+			return err;
+	}
+
+	return 0;
+}
+
 static void mv88e6352_tai_event_work(struct work_struct *ugly)
 {
 	struct delayed_work *dw = to_delayed_work(ugly);
@@ -377,6 +436,88 @@ out:
 	return err;
 }
 
+static void mv88e6352_nsec_to_cycles(struct mv88e6xxx_chip *chip, u64 ns, u32 *cycles)
+{
+	u32 ns_per_cycle = chip->cc_coeffs->cc_mult >> chip->cc_coeffs->cc_shift;
+
+	*cycles = div_u64(ns, ns_per_cycle);
+}
+
+static int mv88e6352_ptp_time_to_cycles(struct mv88e6xxx_chip *chip,
+					struct ptp_clock_time *t, u32 *cycles)
+{
+	u64 ns = t->sec * NSEC_PER_SEC + t->nsec;
+
+	if (t->sec < 0)
+		return -ERANGE;
+
+	mv88e6352_nsec_to_cycles(chip, ns, cycles);
+
+	return 0;
+}
+
+static int mv88e6352_ptp_enable_perout(struct mv88e6xxx_chip *chip,
+				       struct ptp_clock_request *rq, int on)
+{
+	u32 triggen_amt;
+	u32 pulse_width;
+	int func;
+	int pin;
+	int err;
+
+	if (rq->perout.flags & PTP_PEROUT_DUTY_CYCLE) {
+		if ((rq->perout.flags & PTP_PEROUT_ONE_SHOT) == 0)
+			return -EOPNOTSUPP;
+
+		err = mv88e6352_ptp_time_to_cycles(chip, &rq->perout.on, &pulse_width);
+		if (err)
+			return err;
+	} else {
+		s64 req_pulse_width_ns = (rq->perout.period.sec * NSEC_PER_SEC +
+					  rq->perout.period.nsec) / 2;
+
+		mv88e6352_nsec_to_cycles(chip, req_pulse_width_ns, &pulse_width);
+	}
+
+	/* the pulse width must be between 1 and 15 switch clock cycles */
+	if (pulse_width == 0)
+		return -EINVAL;
+	else if (pulse_width > 0xf)
+		return -ERANGE;
+
+	/* TrigGen Amount register contains the timestamp (one-shot mode) or period */
+	if (rq->perout.flags & PTP_PEROUT_ONE_SHOT)
+		err = mv88e6352_ptp_time_to_cycles(chip, &rq->perout.start, &triggen_amt);
+	else
+		err = mv88e6352_ptp_time_to_cycles(chip, &rq->perout.period, &triggen_amt);
+	if (err)
+		return err;
+
+	pin = ptp_find_pin(chip->ptp_clock, PTP_PF_PEROUT, rq->perout.index);
+	if (pin < 0)
+		return -EBUSY;
+
+	mv88e6xxx_reg_lock(chip);
+
+	func = on ? MV88E6352_G2_SCRATCH_GPIO_PCTL_TRIG
+		  : MV88E6352_G2_SCRATCH_GPIO_PCTL_GPIO;
+
+	err = mv88e6352_config_trigger(chip, on,
+				       !!(rq->perout.flags & PTP_PEROUT_ONE_SHOT),
+				       pulse_width, triggen_amt, 0);
+	if (err)
+		goto out;
+
+	err = mv88e6352_set_gpio_func(chip, pin, func, true);
+	if (err)
+		goto out;
+
+out:
+	mv88e6xxx_reg_unlock(chip);
+
+	return err;
+}
+
 static int mv88e6352_ptp_enable(struct ptp_clock_info *ptp,
 				struct ptp_clock_request *rq, int on)
 {
@@ -385,6 +526,8 @@ static int mv88e6352_ptp_enable(struct ptp_clock_info *ptp,
 	switch (rq->type) {
 	case PTP_CLK_REQ_EXTTS:
 		return mv88e6352_ptp_enable_extts(chip, rq, on);
+	case PTP_CLK_REQ_PEROUT:
+		return mv88e6352_ptp_enable_perout(chip, rq, on);
 	default:
 		return -EOPNOTSUPP;
 	}
@@ -396,8 +539,8 @@ static int mv88e6352_ptp_verify(struct ptp_clock_info *ptp, unsigned int pin,
 	switch (func) {
 	case PTP_PF_NONE:
 	case PTP_PF_EXTTS:
-		break;
 	case PTP_PF_PEROUT:
+		break;
 	case PTP_PF_PHYSYNC:
 		return -EOPNOTSUPP;
 	}
@@ -451,6 +594,7 @@ const struct mv88e6xxx_ptp_ops mv88e6352_ptp_ops = {
 	.port_enable = mv88e6352_hwtstamp_port_enable,
 	.port_disable = mv88e6352_hwtstamp_port_disable,
 	.n_ext_ts = 1,
+	.n_per_out = 1,
 	.arr0_sts_reg = MV88E6XXX_PORT_PTP_ARR0_STS,
 	.arr1_sts_reg = MV88E6XXX_PORT_PTP_ARR1_STS,
 	.dep_sts_reg = MV88E6XXX_PORT_PTP_DEP_STS,
@@ -544,7 +688,7 @@ int mv88e6xxx_ptp_setup(struct mv88e6xxx_chip *chip)
 		 "%s", dev_name(chip->dev));
 
 	chip->ptp_clock_info.n_ext_ts	= ptp_ops->n_ext_ts;
-	chip->ptp_clock_info.n_per_out	= 0;
+	chip->ptp_clock_info.n_per_out	= ptp_ops->n_per_out;
 	chip->ptp_clock_info.n_pins	= mv88e6xxx_num_gpio(chip);
 	chip->ptp_clock_info.pps	= 0;
 

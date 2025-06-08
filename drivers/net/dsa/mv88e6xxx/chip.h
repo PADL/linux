@@ -836,6 +836,7 @@ struct mv88e6xxx_ptp_ops {
 	int (*global_disable)(struct mv88e6xxx_chip *chip);
 	int (*set_ptp_cpu_port)(struct mv88e6xxx_chip *chip, int port);
 	int n_ext_ts;
+	int n_per_out;
 	int arr0_sts_reg;
 	int arr1_sts_reg;
 	int dep_sts_reg;
