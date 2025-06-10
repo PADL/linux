@@ -2265,8 +2265,10 @@ static int mv88e6xxx_port_db_get(struct mv88e6xxx_chip *chip,
 			return err;
 
 		/* switchdev expects -EOPNOTSUPP to honor software VLANs */
-		if (!vlan.valid)
+		if (!vlan.valid) {
+			dev_warn(chip->dev, "VID %d has invalid VTU entry\n", vid);
 			return -EOPNOTSUPP;
+		}
 
 		*fid = vlan.fid;
 	}
