@@ -667,6 +667,15 @@ config DRM_PANEL_RONBO_RB070D30
 	  Say Y here if you want to enable support for Ronbo Electronics
 	  RB070D30 1024x600 DSI panel.
 
+config DRM_PANEL_MAXEN_B70HM30
+	tristate "Maxen Electronics B70HM30 panel"
+	depends on OF
+	depends on DRM_MIPI_DSI
+	depends on BACKLIGHT_CLASS_DEVICE
+	help
+	  Say Y here if you want to enable support for Maxen Electronics
+	  B70HM30 1024x600 DSI panel.
+
 config DRM_PANEL_SAMSUNG_AMS581VF01
 	tristate "Samsung AMS581VF01 panel"
 	depends on OF

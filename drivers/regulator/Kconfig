@@ -1757,4 +1757,14 @@ config REGULATOR_QCOM_LABIBB
 	  boost regulator and IBB can be used as a negative boost regulator
 	  for LCD display panel.
 
+config REGULATOR_XEBRA_TOUCHSCREEN
+	tristate "XEBRA (B70HM30) 7-inch touchscreen panel regulator"
+	depends on BACKLIGHT_CLASS_DEVICE
+	depends on I2C
+	select REGMAP_I2C
+	help
+	  This driver supports regulator on the XEBRA (Maxen Electronics B70HM30)
+	  touchscreen unit. The regulator is used to enable power to the
+	  display and to control backlight.
+
 endif
