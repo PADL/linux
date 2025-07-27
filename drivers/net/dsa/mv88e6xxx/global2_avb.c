@@ -15,6 +15,7 @@
 
 #include "global2.h"
 #include "avb.h"
+#include "rmu.h"
 
 /* Offset 0x16: AVB Command Register
  * Offset 0x17: AVB Data Register
@@ -51,6 +52,10 @@ static int mv88e6xxx_g2_avb_read(struct mv88e6xxx_chip *chip, u16 readop,
 	if (len > 4)
 		return -E2BIG;
 
+	err = mv88e6xxx_rmu_avb_read(chip, readop, data, len);
+	if (!mv88e6xxx_rmu_can_mdio_fallback(chip, err))
+		return err;
+
 	err = mv88e6xxx_g2_write(chip, MV88E6352_G2_AVB_CMD,
 				 MV88E6352_G2_AVB_CMD_BUSY | readop);
 	if (err)
@@ -80,12 +85,18 @@ static int mv88e6xxx_g2_avb_write(struct mv88e6xxx_chip *chip, u16 writeop,
 	if (err)
 		return err;
 
-	err = mv88e6xxx_g2_write(chip, MV88E6352_G2_AVB_DATA, data);
+	err = mv88e6xxx_rmu_avb_write(chip, writeop, data);
+	if (mv88e6xxx_rmu_can_mdio_fallback(chip, err)) {
+		err = mv88e6xxx_g2_write(chip, MV88E6352_G2_AVB_DATA, data);
+		if (err)
+			return err;
+
+		err = mv88e6xxx_g2_write(chip, MV88E6352_G2_AVB_CMD,
+					 MV88E6352_G2_AVB_CMD_BUSY | writeop);
+	}
+
 	if (err)
 		return err;
-
-	err = mv88e6xxx_g2_write(chip, MV88E6352_G2_AVB_CMD,
-				 MV88E6352_G2_AVB_CMD_BUSY | writeop);
 
 	return mv88e6xxx_g2_avb_wait(chip);
 }

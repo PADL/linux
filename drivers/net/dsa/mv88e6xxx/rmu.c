@@ -11,6 +11,7 @@
 #include <net/dsa.h>
 #include "chip.h"
 #include "global1.h"
+#include "global2.h"
 #include "port.h"
 #include "rmu.h"
 
@@ -619,6 +620,141 @@ int mv88e6xxx_rmu_atu_mac_data_read(struct mv88e6xxx_chip *chip,
 	entry->mac[5] = tmp & 0xff;
 
 	mv88e6xxx_g1_atu_data_to_entry(chip, ntohs(resp.data.value), entry);
+
+	return 0;
+}
+
+int mv88e6xxx_rmu_avb_write(struct mv88e6xxx_chip *chip,
+			    u16 writeop, u16 data)
+{
+	struct mv88e6xxx_rmu_write_avb_resp req, resp;
+	int resp_len;
+	int ret;
+
+	if (chip->rmu_state == MV88E6XXX_RMU_DISABLED ||
+	    (chip->rmu_flags & MV88E6XXX_RMU_IS_SLOW))
+		return -EOPNOTSUPP;
+
+	memset(&req, 0, sizeof(req));
+
+	req.rmu_header.format = MV88E6XXX_RMU_REQ_FORMAT_SOHO;
+	req.rmu_header.prodnr = MV88E6XXX_RMU_REQ_PAD;
+	req.rmu_header.code = MV88E6XXX_RMU_REQ_CODE_REG_RW;
+
+	req.data.cmd =
+		MV88E6XXX_RMU_REQ_RW_0_WRITE(chip->info->global2_addr,
+					     MV88E6352_G2_AVB_DATA);
+	req.data.value = htons(data);
+
+	req.op.cmd = MV88E6XXX_RMU_REQ_RW_0_WRITE(chip->info->global2_addr,
+						  MV88E6352_G2_AVB_CMD);
+	req.op.value = htons(MV88E6352_G2_AVB_CMD_BUSY | writeop);
+
+	req.end.cmd = MV88E6XXX_RMU_REQ_RW_0_END;
+	req.end.value = MV88E6XXX_RMU_REQ_RW_1_END;
+
+	resp_len = sizeof(resp);
+	ret = mv88e6xxx_rmu_request(chip, &req, sizeof(req),
+				    &resp, resp_len,
+				    MV88E6XXX_RMU_REQUEST_TIMEOUT_MS);
+	if (ret < 0) {
+		dev_dbg(chip->dev, "RMU: error for command REQ_RW:AVB_WRITE %pe\n",
+			ERR_PTR(ret));
+		return ret;
+	}
+
+	if (ret < resp_len) {
+		dev_err(chip->dev, "RMU: AVB write returned wrong length: rx %d expecting %d\n",
+			ret, resp_len);
+		return -EPROTO;
+	}
+
+	if (resp.rmu_header.code != MV88E6XXX_RMU_RESP_CODE_REG_RW) {
+		dev_err(chip->dev, "RMU: AVB write returned wrong code %d\n",
+			be16_to_cpu(resp.rmu_header.code));
+		return -EPROTO;
+	}
+
+	if (resp.data.cmd != req.data.cmd) {
+		dev_err(chip->dev, "RMU: AVB write command mismatch: rx %02x expecting %02x\n",
+			resp.data.cmd, req.data.cmd);
+		return -EPROTO;
+	}
+
+	return 0;
+}
+
+int mv88e6xxx_rmu_avb_read(struct mv88e6xxx_chip *chip,
+			   u16 readop, u16 *data, int len)
+{
+	struct mv88e6xxx_rmu_read_avb_resp req, resp;
+	int pdu_len;
+	int ret, i;
+
+	BUG_ON(len > 4);
+
+	if (chip->rmu_state == MV88E6XXX_RMU_DISABLED ||
+	    (chip->rmu_flags & MV88E6XXX_RMU_IS_SLOW))
+		return -EOPNOTSUPP;
+
+	req.rmu_header.format = MV88E6XXX_RMU_REQ_FORMAT_SOHO;
+	req.rmu_header.prodnr = MV88E6XXX_RMU_REQ_PAD;
+	req.rmu_header.code = MV88E6XXX_RMU_REQ_CODE_REG_RW;
+
+	req.op.cmd = MV88E6XXX_RMU_REQ_RW_0_WRITE(chip->info->global2_addr,
+						  MV88E6352_G2_AVB_CMD);
+	req.op.value = htons(MV88E6352_G2_AVB_CMD_BUSY | readop);
+
+	req.wait.cmd = MV88E6XXX_RMU_REQ_RW_0_WAIT_0(chip->info->global2_addr,
+						     MV88E6352_G2_AVB_CMD);
+	req.wait.value = htons(__bf_shf(MV88E6352_G2_AVB_CMD_BUSY));
+
+	for (i = 0; i < len; i++) {
+		req.data[i].cmd =
+			MV88E6XXX_RMU_REQ_RW_0_READ(chip->info->global2_addr,
+						    MV88E6352_G2_AVB_DATA);
+		req.data[i].value = 0;
+	}
+
+	req.data[len].cmd = MV88E6XXX_RMU_REQ_RW_0_END;
+	req.data[len].value = MV88E6XXX_RMU_REQ_RW_1_END;
+
+	pdu_len = sizeof(struct mv88e6xxx_rmu_header) +
+		(2 + len + 1) * sizeof(struct mv88e6xxx_rmu_rw_command);
+	ret = mv88e6xxx_rmu_request(chip, &req, pdu_len,
+				    &resp, pdu_len,
+				    MV88E6XXX_RMU_REQUEST_TIMEOUT_MS);
+	if (ret < 0) {
+		dev_dbg(chip->dev, "RMU: error for command REQ_RW:AVB_READ %pe\n",
+			ERR_PTR(ret));
+		return ret;
+	}
+
+	if (ret < pdu_len) {
+		dev_err(chip->dev, "RMU: AVB read returned wrong length: rx %d expecting %d\n",
+			ret, pdu_len);
+		return -EPROTO;
+	}
+
+	if (resp.rmu_header.code != MV88E6XXX_RMU_RESP_CODE_REG_RW) {
+		dev_err(chip->dev, "RMU: AVB read returned wrong code %d\n",
+			be16_to_cpu(resp.rmu_header.code));
+		return -EPROTO;
+	}
+
+	if ((ntohs(resp.wait.value) & 0xff) == 0xff) {
+		dev_err(chip->dev, "RMU: AVB read wait on bit timed out\n");
+		return -ETIMEDOUT;
+	}
+
+	for (i = 0; i < len; i++) {
+		if (resp.data[i].cmd != req.data[i].cmd) {
+			dev_err(chip->dev, "RMU: AVB read response mismatch[%d/%d]: rx %02x expecting %02x\n",
+				i, len, resp.data[i].cmd, req.data[i].cmd);
+			return -EPROTO;
+		}
+		data[i] = ntohs(resp.data[i].value);
+	}
 
 	return 0;
 }
