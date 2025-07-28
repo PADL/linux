@@ -839,8 +839,10 @@ struct mv88e6xxx_ptp_ops {
 	int (*ptp_verify)(struct ptp_clock_info *ptp, unsigned int pin,
 			  enum ptp_pin_function func, unsigned int chan);
 	void (*event_work)(struct work_struct *ugly);
-	int (*port_enable)(struct mv88e6xxx_chip *chip, int port);
-	int (*port_disable)(struct mv88e6xxx_chip *chip, int port);
+	int (*port_enable)(struct mv88e6xxx_chip *chip, int port,
+			   struct hwtstamp_config *config);
+	int (*port_disable)(struct mv88e6xxx_chip *chip, int port,
+			    struct hwtstamp_config *config);
 	int (*global_enable)(struct mv88e6xxx_chip *chip);
 	int (*global_disable)(struct mv88e6xxx_chip *chip);
 	int (*set_ptp_cpu_port)(struct mv88e6xxx_chip *chip, int port);

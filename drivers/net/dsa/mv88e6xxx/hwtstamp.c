@@ -126,12 +126,14 @@ static int mv88e6xxx_set_hwtstamp_config(struct mv88e6xxx_chip *chip, int port,
 	case HWTSTAMP_FILTER_NONE:
 		tstamp_enable = false;
 		break;
-	case HWTSTAMP_FILTER_PTP_V2_L4_EVENT:
-	case HWTSTAMP_FILTER_PTP_V2_L4_SYNC:
-	case HWTSTAMP_FILTER_PTP_V2_L4_DELAY_REQ:
 	case HWTSTAMP_FILTER_PTP_V2_L2_EVENT:
 	case HWTSTAMP_FILTER_PTP_V2_L2_SYNC:
 	case HWTSTAMP_FILTER_PTP_V2_L2_DELAY_REQ:
+		config->rx_filter = HWTSTAMP_FILTER_PTP_V2_L2_EVENT;
+		break;
+	case HWTSTAMP_FILTER_PTP_V2_L4_EVENT:
+	case HWTSTAMP_FILTER_PTP_V2_L4_SYNC:
+	case HWTSTAMP_FILTER_PTP_V2_L4_DELAY_REQ:
 	case HWTSTAMP_FILTER_PTP_V2_EVENT:
 	case HWTSTAMP_FILTER_PTP_V2_SYNC:
 	case HWTSTAMP_FILTER_PTP_V2_DELAY_REQ:
@@ -149,10 +151,10 @@ static int mv88e6xxx_set_hwtstamp_config(struct mv88e6xxx_chip *chip, int port,
 		if (chip->enable_count == 1 && ptp_ops->global_enable)
 			ptp_ops->global_enable(chip);
 		if (ptp_ops->port_enable)
-			ptp_ops->port_enable(chip, port);
+			ptp_ops->port_enable(chip, port, config);
 	} else {
 		if (ptp_ops->port_disable)
-			ptp_ops->port_disable(chip, port);
+			ptp_ops->port_disable(chip, port, config);
 		chip->enable_count -= 1;
 		if (chip->enable_count == 0 && ptp_ops->global_disable)
 			ptp_ops->global_disable(chip);
@@ -338,7 +340,7 @@ bool mv88e6xxx_port_rxtstamp(struct dsa_switch *ds, int port,
 	chip = ds->priv;
 	ps = &chip->port_hwtstamp[port];
 
-	if (ps->tstamp_config.rx_filter != HWTSTAMP_FILTER_PTP_V2_EVENT)
+	if (ps->tstamp_config.rx_filter == HWTSTAMP_FILTER_NONE)
 		return false;
 
 	hdr = mv88e6xxx_should_tstamp(chip, port, skb, type);
@@ -525,16 +527,24 @@ int mv88e6165_global_enable(struct mv88e6xxx_chip *chip)
 	return mv88e6xxx_ptp_write(chip, MV88E6165_PTP_CFG, val);
 }
 
-int mv88e6352_hwtstamp_port_disable(struct mv88e6xxx_chip *chip, int port)
+int mv88e6352_hwtstamp_port_disable(struct mv88e6xxx_chip *chip, int port,
+				    struct hwtstamp_config *config)
 {
 	return mv88e6xxx_port_ptp_write(chip, port, MV88E6XXX_PORT_PTP_CFG0,
 					MV88E6XXX_PORT_PTP_CFG0_DISABLE_PTP);
 }
 
-int mv88e6352_hwtstamp_port_enable(struct mv88e6xxx_chip *chip, int port)
+int mv88e6352_hwtstamp_port_enable(struct mv88e6xxx_chip *chip, int port,
+				   struct hwtstamp_config *config)
 {
-	return mv88e6xxx_port_ptp_write(chip, port, MV88E6XXX_PORT_PTP_CFG0,
-					MV88E6XXX_PORT_PTP_CFG0_DISABLE_TSPEC_MATCH);
+	u16 val;
+
+	if (config->rx_filter == HWTSTAMP_FILTER_PTP_V2_L2_EVENT)
+		val = MV88E6XXX_PORT_PTP_CFG0_TSPEC_8021AS;
+	else
+		val = MV88E6XXX_PORT_PTP_CFG0_DISABLE_TSPEC_MATCH;
+
+	return mv88e6xxx_port_ptp_write(chip, port, MV88E6XXX_PORT_PTP_CFG0, val);
 }
 
 static int mv88e6xxx_hwtstamp_port_setup(struct mv88e6xxx_chip *chip, int port)
@@ -548,7 +558,7 @@ static int mv88e6xxx_hwtstamp_port_setup(struct mv88e6xxx_chip *chip, int port)
 	skb_queue_head_init(&ps->rx_queue2);
 
 	if (ptp_ops->port_disable)
-		return ptp_ops->port_disable(chip, port);
+		return ptp_ops->port_disable(chip, port, &ps->tstamp_config);
 
 	return 0;
 }
