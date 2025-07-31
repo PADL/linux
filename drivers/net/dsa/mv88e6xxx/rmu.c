@@ -581,12 +581,34 @@ drop:
 	return;
 }
 
+static int mv88e6xxx_is_rmu_ready(struct mv88e6xxx_chip *chip, int *ready)
+{
+	struct gpio_desc *gpio;
+
+	*ready = 0;
+
+	gpio = gpiod_get_optional(chip->dev, "rmu-ready", GPIOD_IN);
+	if (IS_ERR(gpio))
+		return PTR_ERR(gpio);
+
+	if (!gpio) {
+		*ready = 1;
+		return 0;
+	}
+
+	*ready = gpiod_get_value_cansleep(gpio);
+
+	gpiod_put(gpio);
+
+	return 0;
+}
+
 int mv88e6xxx_detect_rmu_only(struct mv88e6xxx_chip *chip)
 {
 	struct dsa_mv88e6xxx_pdata *pdata = chip->dev->platform_data;
 	struct device_node *np = chip->dev->of_node;
+	int err, ready;
 	bool enabled;
-	int err;
 
 	/* RMU-only mode must be explicitly enabled through device tree or platform data */
 	if (np)
@@ -598,6 +620,15 @@ int mv88e6xxx_detect_rmu_only(struct mv88e6xxx_chip *chip)
 
 	if (!enabled)
 		return -ENODEV;
+
+	err = mv88e6xxx_is_rmu_ready(chip, &ready);
+	if (err)
+		return err;
+
+	if (!ready) {
+		dev_info(chip->dev, "RMU: rmu-ready GPIO is low, deferring\n");
+		return -EPROBE_DEFER;
+	}
 
 	chip->tag_protocol = DSA_TAG_PROTO_EDSA; /* must be set for get_tag_protocol() */
 	chip->rmu_state = MV88E6XXX_RMU_ONLY_ENABLED;
