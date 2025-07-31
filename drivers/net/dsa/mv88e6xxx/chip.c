@@ -3944,6 +3944,13 @@ static int mv88e6xxx_mdio_register(struct mv88e6xxx_chip *chip,
 	}
 
 	err = of_mdiobus_register(bus, np);
+	/* This is a bit of an ugly workaround for the fact that the phylink
+	 * APIs squash error codes to -EIO, which doesn't allow the propagation of
+	 * -EPROBE_DEFER on RMU timeouts.
+	 */
+	if (err == -EIO &&
+	    chip->rmu_state == MV88E6XXX_RMU_ONLY_ENABLED)
+		err = -EPROBE_DEFER;
 	if (err) {
 		dev_err(chip->dev, "Cannot register device node %s (%d) MDIO bus (%d)\n", np->full_name, np->phandle, err);
 		mv88e6xxx_g2_irq_mdio_free(chip, bus);
