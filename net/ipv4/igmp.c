@@ -109,7 +109,7 @@
 #ifdef CONFIG_IP_MULTICAST
 /* Parameter names and values are taken from igmp-v2-06 draft */
 
-#define IGMP_QUERY_INTERVAL			(125*HZ)
+#define IGMP_QUERY_INTERVAL			(30*HZ)
 #define IGMP_QUERY_RESPONSE_INTERVAL		(10*HZ)
 
 #define IGMP_INITIAL_REPORT_DELAY		(1)
