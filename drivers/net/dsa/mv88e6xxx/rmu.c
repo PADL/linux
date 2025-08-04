@@ -70,20 +70,31 @@ static int __mv88e6xxx_rmu_request_retry(struct mv88e6xxx_chip *chip,
 					 int timeout_ms)
 {
 	void (*insert_seqno)(struct sk_buff *skb, u32 seqno);
+	int min_attempts, attempts = 0;
 	unsigned long deadline;
 	ktime_t now;
 	int err;
 
 	now = ktime_get();
 
-	if (chip->rmu_state == MV88E6XXX_RMU_ONLY_ENABLED)
-		deadline = jiffies + msecs_to_jiffies(MV88E6XXX_RMU_RETRY_TIMEOUT_MS);
-	else
-		deadline = 0; /* do not retry RMU if MDIO fallback available */
+	if (chip->rmu_state == MV88E6XXX_RMU_ONLY_ENABLED) {
+		unsigned int ms;
+
+		/* use a longer retry timeout during module probe */
+		ms = chip->ds->dst->setup ? MV88E6XXX_RMU_RETRY_TIMEOUT_MS
+					  : MV88E6XXX_RMU_PROBE_RETRY_TIMEOUT_MS;
+		deadline = jiffies + msecs_to_jiffies(ms);
+		min_attempts = 2;
+	} else {
+		/* if MDIO fallback is avaliable, do not retry MDIO */
+		deadline = 0;
+		min_attempts = 1;
+	}
 
 	insert_seqno = edsa ? mv88e6xxx_rmu_fill_seqno_edsa : mv88e6xxx_rmu_fill_seqno_dsa;
 
 	do {
+		attempts++;
 		err = dsa_inband_request(&chip->rmu_inband, skb_get(skb),
 					 insert_seqno, resp, resp_len,
 					 timeout_ms);
@@ -92,7 +103,7 @@ static int __mv88e6xxx_rmu_request_retry(struct mv88e6xxx_chip *chip,
 			err = -ETIMEDOUT;
 		if (err != -ETIMEDOUT)
 			break;
-	} while (time_is_after_jiffies(deadline));
+	} while (attempts < min_attempts || time_is_after_jiffies(deadline));
 
 	dev_kfree_skb_any(skb);
 
@@ -100,8 +111,10 @@ static int __mv88e6xxx_rmu_request_retry(struct mv88e6xxx_chip *chip,
 		bool defer = chip->rmu_state == MV88E6XXX_RMU_ONLY_ENABLED &&
 			     !chip->ds->dst->setup;
 
-		dev_err(chip->dev, "RMU: request timed out%s\n",
-			defer ? "; deferring" : "");
+		dev_err(chip->dev, "RMU: request timed out%s after %d attempt%s, %lld ms\n",
+			defer ? "; deferring" : "",
+			attempts, attempts == 1 ? "" : "s",
+			ktime_sub(ktime_get(), now));
 
 		if (defer)
 			err = -EPROBE_DEFER;
