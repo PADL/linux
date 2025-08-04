@@ -80,10 +80,15 @@ static int __mv88e6xxx_rmu_request_retry(struct mv88e6xxx_chip *chip,
 	if (delay > 0)
 		usleep_range(ktime_to_us(delay), MV88E6XXX_RMU_REQUEST_RATE_USEC_MAX);
 
-	if (chip->rmu_state == MV88E6XXX_RMU_ONLY_ENABLED)
-		deadline = jiffies + msecs_to_jiffies(MV88E6XXX_RMU_RETRY_TIMEOUT_MS);
-	else
+	if (chip->rmu_state == MV88E6XXX_RMU_ONLY_ENABLED) {
+		unsigned int ms;
+
+		ms = chip->ds->dst->setup ? MV88E6XXX_RMU_RETRY_TIMEOUT_MS
+					  : MV88E6XXX_RMU_PROBE_RETRY_TIMEOUT_MS;
+		deadline += msecs_to_jiffies(ms);
+	} else {
 		deadline = 0; /* do not retry RMU if MDIO fallback available */
+	}
 
 	insert_seqno = edsa ? mv88e6xxx_rmu_fill_seqno_edsa : mv88e6xxx_rmu_fill_seqno_dsa;
 
