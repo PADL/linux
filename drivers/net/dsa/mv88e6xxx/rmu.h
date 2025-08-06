@@ -65,13 +65,19 @@ struct mv88e6xxx_rmu_rw_resp {
 	__be16 end1;
 } __packed;
 
+/* number of RMU MIB statistics, by type, in octets */
+#define MV88E6XXX_RMU_STATS_TYPE_DATA0_LEN	128
+#define MV88E6XXX_RMU_STATS_TYPE_PORT_LEN	12
+#define MV88E6XXX_RMU_STATS_TYPE_DATA1_LEN	128
+#define MV88E6XXX_RMU_STATS_TYPE_MAX_LEN	( MV88E6XXX_RMU_STATS_TYPE_DATA0_LEN + \
+						  MV88E6XXX_RMU_STATS_TYPE_DATA1_LEN )
+
 struct mv88e6xxx_rmu_mib_resp {
 	struct mv88e6xxx_rmu_header rmu_header;
 	__be16 swport;
 	__be32 timestamp;
-	__be32 bank0[32];
-	__be16 port[6];
-};
+	__be32 data[MV88E6XXX_RMU_STATS_TYPE_MAX_LEN / 4];
+} __packed;
 
 int mv88e6xxx_rmu_stats(struct mv88e6xxx_chip *chip, int port,
 			uint64_t *data,

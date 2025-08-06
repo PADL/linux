@@ -109,7 +109,14 @@ int mv88e6xxx_rmu_stats(struct mv88e6xxx_chip *chip, int port,
 	if (!chip->rmu_enabled)
 		return -EOPNOTSUPP;
 
-	resp_len = sizeof(resp);
+	resp_len = sizeof(resp) - sizeof(resp.data);
+	if (chip->info->stats_type & STATS_TYPE_BANK0)
+		resp_len += MV88E6XXX_RMU_STATS_TYPE_DATA0_LEN;
+	if (chip->info->stats_type & STATS_TYPE_PORT)
+		resp_len += MV88E6XXX_RMU_STATS_TYPE_PORT_LEN;
+	else if (chip->info->stats_type & STATS_TYPE_BANK1)
+		resp_len += MV88E6XXX_RMU_STATS_TYPE_DATA1_LEN;
+
 	ret = mv88e6xxx_rmu_request(chip, req, sizeof(req),
 				    &resp, resp_len);
 	if (ret <  0) {
@@ -133,38 +140,49 @@ int mv88e6xxx_rmu_stats(struct mv88e6xxx_chip *chip, int port,
 
 	for (i = 0, j = 0; i < num_hw_stats; i++) {
 		stat = &hw_stats[i];
-		if (!(stat->type & chip->info->stats_type))
+
+		if ((stat->type & chip->info->stats_type) == 0) {
+			/* Not available via RMU, use SMI (if available) */
+			j += mv88e6xxx_stats_get_stat(chip, port, stat, &data[j]);
 			continue;
+		}
 
 		if (stat->type & STATS_TYPE_PORT) {
+			__be16 *port = (__be16 *)resp.data;
+
+			if (chip->info->stats_type & STATS_TYPE_BANK0)
+				port += MV88E6XXX_RMU_STATS_TYPE_DATA0_LEN / 2;
+
 			switch (stat->reg) {
 			case MV88E6XXX_PORT_IN_DISCARD_LO:
-				data[j] = be16_to_cpu(resp.port[0]) << 16;
-				data[j] |= be16_to_cpu(resp.port[1]);
+				data[j] = be16_to_cpu(port[0]) << 16;
+				data[j] |= be16_to_cpu(port[1]);
 				break;
 			case MV88E6XXX_PORT_IN_FILTERED:
-				data[j] = be16_to_cpu(resp.port[3]);
+				data[j] = be16_to_cpu(port[3]);
 				break;
 			case MV88E6XXX_PORT_OUT_FILTERED:
-				data[j] = be16_to_cpu(resp.port[5]);
+				data[j] = be16_to_cpu(port[5]);
 				break;
 			default:
 				return -EINVAL;
 			}
 		}
 
-		if (stat->type & STATS_TYPE_BANK0) {
-			data[j] = be32_to_cpu(resp.bank0[stat->reg]);
+		if (stat->type & (STATS_TYPE_BANK0 | STATS_TYPE_BANK1)) {
+			int reg = stat->reg;
+
+			if (stat->type & STATS_TYPE_BANK1 &&
+			    (chip->info->stats_type & STATS_TYPE_BANK0))
+				reg += MV88E6XXX_RMU_STATS_TYPE_DATA0_LEN / 4;
+
+			data[j] = be32_to_cpu(resp.data[reg]);
 			if (stat->size == 8) {
-				high = be32_to_cpu(resp.bank0[stat->reg + 1]);
+				high = be32_to_cpu(resp.data[reg + 1]);
 				data[j] |= (high << 32);
 			}
 		}
 
-		if (stat->type & STATS_TYPE_BANK1) {
-			/* Not available via RMU, use SMI */
-			mv88e6xxx_stats_get_stat(chip, port, stat, &data[j]);
-		}
 		j++;
 	}
 
