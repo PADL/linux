@@ -1,7 +1,7 @@
 /*
  * vc4-kms-dsi-maxen-b70hm30-overlay.dts
  *
- * Maxen Electronics B70HM30 touchscreen display panel on a PADL XEBRA board.
+ * Maxen Electronics B70HM30 touchscreen display panel
  */
 
 /dts-v1/;
