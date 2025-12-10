@@ -865,6 +865,16 @@ config INPUT_CMA3000_I2C
 	  To compile this driver as a module, choose M here: the
 	  module will be called cma3000_d0x_i2c.
 
+config INPUT_XEBRA_TAIL_ENCODER
+	tristate "XEBRA tail rotary encoders"
+	depends on I2C
+	help
+	  Say Y here to support the rotary encoders and push switches on
+	  the XEBRA tail microcontroller, which reports them over I2C.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called xebra-tail-encoder.
+
 config INPUT_XEN_KBDDEV_FRONTEND
 	tristate "Xen virtual keyboard and mouse support"
 	depends on XEN
