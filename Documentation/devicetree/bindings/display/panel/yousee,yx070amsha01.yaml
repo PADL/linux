@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: (GPL-2.0+ OR X11)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/display/panel/yousee,yx070amsha01.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Yousee YX070AMSHA01 DSI Display Panel
+
+maintainers:
+  - Luke Howard <lukeh@padl.com>
+
+properties:
+  compatible:
+    const: yousee,yx070amsha01
+
+  reg:
+    maxItems: 1
+
+  reset-gpios:
+    description: GPIO used for the reset pin
+    maxItems: 1
+
+  vcc-lcd-supply:
+    description: Power regulator
+
+
+required:
+  - compatible
+  - reg
+  - reset-gpios
+  - vcc-lcd-supply
+
+additionalProperties: false
