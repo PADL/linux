@@ -1223,6 +1223,8 @@ patternProperties:
     description: Oxford Semiconductor, Ltd.
   "^ozzmaker,.*":
     description: OzzMaker
+  "^padl,.*":
+    description: PADL Software Pty Ltd
   "^panasonic,.*":
     description: Panasonic Corporation
   "^parade,.*":
