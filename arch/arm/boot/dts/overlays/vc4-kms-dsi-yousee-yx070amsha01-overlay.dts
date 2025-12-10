@@ -1,0 +1,127 @@
+/*
+ * vc4-kms-dsi-yousee-yx070amsha01-overlay.dts
+ *
+ * Yousee YX070AMSHA01 touchscreen display panel
+ */
+
+/dts-v1/;
+/plugin/;
+
+#include <dt-bindings/gpio/gpio.h>
+
+/*
+ * Note: the ft3519 driver can also take a reset-gpio (active low, i.e.
+ * it sets the value to zero to bring the value high). So we could likely
+ * do away with touch_reg.
+ */
+
+/ {
+	compatible = "brcm,bcm2835";
+
+	i2c_frag: fragment@0 {
+		target = <&i2c_csi_dsi>;
+		__overlay__ {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "okay";
+
+			display_mcu: display_mcu@45 {
+				compatible = "padl,xebra-touchscreen-panel-regulator";
+				reg = <0x45>;
+				gpio-controller;
+				#gpio-cells = <2>;
+			};
+
+			ft3519: ft3519@38 {
+				compatible = "focaltech,ft3519";
+				reg = <0x38>;
+				touchscreen-size-x = <1080>;
+				touchscreen-size-y = <1920>;
+				touchscreen-x-mm = <87>;
+				touchscreen-y-mm = <155>;
+			};
+		};
+	};
+
+	dsi_frag: fragment@1 {
+		target = <&dsi1>;
+		__overlay__ {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "okay";
+
+			port {
+				dsi_out: endpoint {
+					remote-endpoint = <&panel_in>;
+				};
+			};
+
+			dsi_panel: dsi_panel@0 {
+				reg = <0>;
+				compatible = "yousee,yx070amsha01";
+				reset-gpio = <&display_mcu 1 GPIO_ACTIVE_LOW>; /* LCD_RST */
+
+				port {
+					panel_in: endpoint {
+						remote-endpoint = <&dsi_out>;
+					};
+				};
+			};
+		};
+	};
+
+	fragment@2 {
+		target = <&i2c0if>;
+		__overlay__ {
+			status = "okay";
+		};
+	};
+
+	fragment@3 {
+		target = <&i2c0mux>;
+		__overlay__ {
+			status = "okay";
+		};
+	};
+
+	fragment@4 {
+		target-path = "/";
+		__overlay__ {
+			touch_reg: touch_reg@1 {
+				reg = <1>;
+				compatible = "regulator-fixed";
+				regulator-name = "touch_reg_1";
+				gpio = <&display_mcu 4 GPIO_ACTIVE_HIGH>;
+				startup-delay-us = <50000>;
+				enable-active-high;
+			};
+		};
+	};
+
+	fragment@10 {
+		target = <&ft3519>;
+		__dormant__ {
+			touchscreen-inverted-x;
+		};
+	};
+
+	fragment@11 {
+		target = <&ft3519>;
+		__dormant__ {
+			touchscreen-inverted-y;
+		};
+	};
+
+	__overrides__ {
+		dsi0 = <&dsi_frag>, "target:0=",<&dsi0>,
+		       <&i2c_frag>, "target:0=",<&i2c_csi_dsi0>,
+		       <&touch_reg>, "reg:0=0",
+		       <&touch_reg>, "regulator-name=touch_reg_0";
+		invx = <0>, "-10";
+		invy = <0>, "-11";
+		sizex = <&ft3519>,"touchscreen-size-x:0";
+		sizey = <&ft3519>,"touchscreen-size-y:0";
+		swapxy = <&ft3519>,"touchscreen-swapped-x-y?";
+		disable_touch = <&ft3519>, "status=disabled";
+	};
+};
