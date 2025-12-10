@@ -1,0 +1,104 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/input/padl,xebra-tail-encoder.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: XEBRA tail rotary encoders
+
+maintainers:
+  - Luke Howard <lukeh@padl.com>
+
+description: |
+  The XEBRA tail is a microcontroller that reports the deltas of up to eight
+  rotary encoders, and the states of their push switches, over I2C. It can
+  also hold an interrupt line low while it has unread events. Without an
+  interrupt the device is polled.
+
+  Each encoder the board uses is described by a child node, which gives the
+  relative axis its rotation is reported on and, optionally, the key code of
+  its switch. Encoders without a child node are not reported.
+
+properties:
+  compatible:
+    const: padl,xebra-tail-encoder
+
+  reg:
+    maxItems: 1
+
+  interrupts:
+    maxItems: 1
+    description:
+      Encoder interrupt line, asserted until the pending events are read.
+      Should be level triggered.
+
+  poll-interval:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    description:
+      Interval in milliseconds between reads while the encoders are in use.
+    default: 33
+
+  "#address-cells":
+    const: 1
+
+  "#size-cells":
+    const: 0
+
+patternProperties:
+  "^encoder@[0-7]$":
+    type: object
+    additionalProperties: false
+
+    properties:
+      reg:
+        maxItems: 1
+        description: Index of the encoder on the tail.
+
+      label:
+        description: Name of the control.
+
+      linux,axis:
+        $ref: /schemas/types.yaml#/definitions/uint32
+        description: Relative axis (REL_*) that rotation is reported on.
+
+      linux,code:
+        $ref: /schemas/types.yaml#/definitions/uint32
+        description: Key code reported by the encoder's switch.
+
+    required:
+      - reg
+      - linux,axis
+
+required:
+  - compatible
+  - reg
+  - "#address-cells"
+  - "#size-cells"
+
+additionalProperties: false
+
+examples:
+  - |
+    #include <dt-bindings/input/input.h>
+    #include <dt-bindings/interrupt-controller/irq.h>
+
+    i2c {
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        encoders@44 {
+            compatible = "padl,xebra-tail-encoder";
+            reg = <0x44>;
+            interrupt-parent = <&gpio>;
+            interrupts = <25 IRQ_TYPE_LEVEL_LOW>;
+            #address-cells = <1>;
+            #size-cells = <0>;
+
+            encoder@2 {
+                reg = <2>;
+                label = "Main";
+                linux,axis = <REL_DIAL>;
+                linux,code = <BTN_0>;
+            };
+        };
+    };
