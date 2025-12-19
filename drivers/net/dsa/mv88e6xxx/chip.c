@@ -3340,10 +3340,12 @@ static int mv88e6xxx_setup_port_mode(struct mv88e6xxx_chip *chip, int port)
 		return mv88e6xxx_set_port_mode_normal(chip, port);
 
 	/* Setup CPU port mode depending on its supported tag format */
-	if (chip->tag_protocol == DSA_TAG_PROTO_DSA)
+	if (chip->tag_protocol == DSA_TAG_PROTO_DSA ||
+	    chip->tag_protocol == DSA_TAG_PROTO_DSA_PTP_RESERVED2_TS)
 		return mv88e6xxx_set_port_mode_dsa(chip, port);
 
-	if (chip->tag_protocol == DSA_TAG_PROTO_EDSA)
+	if (chip->tag_protocol == DSA_TAG_PROTO_EDSA ||
+	    chip->tag_protocol == DSA_TAG_PROTO_EDSA_PTP_RESERVED2_TS)
 		return mv88e6xxx_set_port_mode_edsa(chip, port);
 
 	return -EINVAL;
@@ -6342,6 +6344,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.multi_chip = true,
 		.ptp_support = true,
 		.ops = &mv88e6191_ops,
+		.supports_ptp_embedded_ts = true,
 	},
 
 	[MV88E6191X] = {
@@ -6369,6 +6372,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.multi_chip = true,
 		.ptp_support = true,
 		.ops = &mv88e6393x_ops,
+		.supports_ptp_embedded_ts = true,
 	},
 
 	[MV88E6193X] = {
@@ -6398,6 +6402,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.multi_chip = true,
 		.ptp_support = true,
 		.ops = &mv88e6393x_ops,
+		.supports_ptp_embedded_ts = true,
 	},
 
 	[MV88E6220] = {
@@ -6508,6 +6513,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.multi_chip = true,
 		.ptp_support = true,
 		.ops = &mv88e6290_ops,
+		.supports_ptp_embedded_ts = true,
 	},
 
 	[MV88E6320] = {
@@ -6598,6 +6604,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.ptp_support = true,
 		.qav = &mv88e6341_qav_info,
 		.ops = &mv88e6341_ops,
+		.supports_ptp_embedded_ts = true,
 	},
 
 	[MV88E6350] = {
@@ -6682,6 +6689,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.ptp_support = true,
 		.qav = &mv88e6352_qav_info,
 		.ops = &mv88e6352_ops,
+		.supports_ptp_embedded_ts = true,
 	},
 	[MV88E6361] = {
 		.prod_num = MV88E6XXX_PORT_SWITCH_ID_PROD_6361,
@@ -6711,6 +6719,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.multi_chip = true,
 		.ptp_support = true,
 		.ops = &mv88e6393x_ops,
+		.supports_ptp_embedded_ts = true,
 	},
 	[MV88E6390] = {
 		.prod_num = MV88E6XXX_PORT_SWITCH_ID_PROD_6390,
@@ -6742,6 +6751,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.ptp_support = true,
 		.qav = &mv88e6390_qav_info,
 		.ops = &mv88e6390_ops,
+		.supports_ptp_embedded_ts = true,
 	},
 	[MV88E6390X] = {
 		.prod_num = MV88E6XXX_PORT_SWITCH_ID_PROD_6390X,
@@ -6771,6 +6781,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.ptp_support = true,
 		.qav = &mv88e6390_qav_info,
 		.ops = &mv88e6390x_ops,
+		.supports_ptp_embedded_ts = true,
 	},
 
 	[MV88E6393X] = {
@@ -6801,6 +6812,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.ptp_support = true,
 		.qav = &mv88e6390_qav_info,
 		.ops = &mv88e6393x_ops,
+		.supports_ptp_embedded_ts = true,
 	},
 };
 
@@ -6905,9 +6917,16 @@ static int mv88e6xxx_change_tag_protocol(struct dsa_switch *ds,
 	struct mv88e6xxx_chip *chip = ds->priv;
 	enum dsa_tag_protocol old_protocol;
 	struct dsa_port *cpu_dp;
-	int err;
+	int err = 0;
 
+	/* The embedded arrival-time-stamp protocols use the DSA or EDSA tag
+	 * unchanged; only the PTP payload differs.
+	 */
 	switch (proto) {
+	case DSA_TAG_PROTO_EDSA_PTP_RESERVED2_TS:
+		if (!chip->info->supports_ptp_embedded_ts)
+			return -EPROTONOSUPPORT;
+		fallthrough;
 	case DSA_TAG_PROTO_EDSA:
 		switch (chip->info->edsa_support) {
 		case MV88E6XXX_EDSA_UNSUPPORTED:
@@ -6919,6 +6938,10 @@ static int mv88e6xxx_change_tag_protocol(struct dsa_switch *ds,
 			break;
 		}
 		break;
+	case DSA_TAG_PROTO_DSA_PTP_RESERVED2_TS:
+		if (!chip->info->supports_ptp_embedded_ts)
+			return -EPROTONOSUPPORT;
+		fallthrough;
 	case DSA_TAG_PROTO_DSA:
 		break;
 	default:
@@ -6939,7 +6962,12 @@ static int mv88e6xxx_change_tag_protocol(struct dsa_switch *ds,
 			goto unwind;
 		}
 	}
+
+	if (chip->info->ptp_support)
+		err = mv88e6xxx_hwtstamp_setup_arr_ts(chip);
 	mv88e6xxx_reg_unlock(chip);
+	if (err)
+		goto unwind;
 
 	return 0;
 
@@ -6949,6 +6977,15 @@ unwind:
 	mv88e6xxx_reg_lock(chip);
 	dsa_switch_for_each_cpu_port_continue_reverse(cpu_dp, ds)
 		mv88e6xxx_setup_port_mode(chip, cpu_dp->index);
+	if (chip->info->ptp_support) {
+		/* Nothing else can be done here, but leaving a port embedding
+		 * time stamps the driver will not strip corrupts every PTP
+		 * event frame it receives, so make the failure visible.
+		 */
+		if (mv88e6xxx_hwtstamp_setup_arr_ts(chip))
+			dev_err(chip->dev,
+				"failed to restore arrival time stamp mode\n");
+	}
 	mv88e6xxx_reg_unlock(chip);
 
 	return err;

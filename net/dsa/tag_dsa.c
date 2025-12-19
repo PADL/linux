@@ -417,6 +417,26 @@ static const struct dsa_device_ops dsa_netdev_ops = {
 
 DSA_TAG_DRIVER(dsa_netdev_ops);
 MODULE_ALIAS_DSA_TAG_DRIVER(DSA_TAG_PROTO_DSA, DSA_NAME);
+
+#define DSA_PTP_RESERVED2_TS_NAME	"dsa-ptp-reserved2-ts"
+
+/* Same wire format as DSA, except that the switch overwrites the reserved2
+ * field of the PTP common header with the frame's arrival time stamp. A
+ * distinct tag name lets user space and out-of-band consumers (XDP/AF_XDP,
+ * packet captures on the conduit) know that the field does not hold what
+ * IEEE 1588 says it should. Extraction itself is done by the mv88e6xxx driver.
+ */
+static const struct dsa_device_ops dsa_ptp_reserved2_ts_netdev_ops = {
+	.name		 = DSA_PTP_RESERVED2_TS_NAME,
+	.proto		 = DSA_TAG_PROTO_DSA_PTP_RESERVED2_TS,
+	.xmit		 = dsa_xmit,
+	.rcv		 = dsa_rcv,
+	.needed_headroom = DSA_HLEN,
+};
+
+DSA_TAG_DRIVER(dsa_ptp_reserved2_ts_netdev_ops);
+MODULE_ALIAS_DSA_TAG_DRIVER(DSA_TAG_PROTO_DSA_PTP_RESERVED2_TS,
+			    DSA_PTP_RESERVED2_TS_NAME);
 #endif	/* CONFIG_NET_DSA_TAG_DSA */
 
 #if IS_ENABLED(CONFIG_NET_DSA_TAG_EDSA)
@@ -461,14 +481,31 @@ static const struct dsa_device_ops edsa_netdev_ops = {
 
 DSA_TAG_DRIVER(edsa_netdev_ops);
 MODULE_ALIAS_DSA_TAG_DRIVER(DSA_TAG_PROTO_EDSA, EDSA_NAME);
+
+#define EDSA_PTP_RESERVED2_TS_NAME	"edsa-ptp-reserved2-ts"
+
+/* EDSA counterpart of dsa_ptp_reserved2_ts_netdev_ops. */
+static const struct dsa_device_ops edsa_ptp_reserved2_ts_netdev_ops = {
+	.name		 = EDSA_PTP_RESERVED2_TS_NAME,
+	.proto		 = DSA_TAG_PROTO_EDSA_PTP_RESERVED2_TS,
+	.xmit		 = edsa_xmit,
+	.rcv		 = edsa_rcv,
+	.needed_headroom = EDSA_HLEN,
+};
+
+DSA_TAG_DRIVER(edsa_ptp_reserved2_ts_netdev_ops);
+MODULE_ALIAS_DSA_TAG_DRIVER(DSA_TAG_PROTO_EDSA_PTP_RESERVED2_TS,
+			    EDSA_PTP_RESERVED2_TS_NAME);
 #endif	/* CONFIG_NET_DSA_TAG_EDSA */
 
 static struct dsa_tag_driver *dsa_tag_drivers[] = {
 #if IS_ENABLED(CONFIG_NET_DSA_TAG_DSA)
 	&DSA_TAG_DRIVER_NAME(dsa_netdev_ops),
+	&DSA_TAG_DRIVER_NAME(dsa_ptp_reserved2_ts_netdev_ops),
 #endif
 #if IS_ENABLED(CONFIG_NET_DSA_TAG_EDSA)
 	&DSA_TAG_DRIVER_NAME(edsa_netdev_ops),
+	&DSA_TAG_DRIVER_NAME(edsa_ptp_reserved2_ts_netdev_ops),
 #endif
 };
 
