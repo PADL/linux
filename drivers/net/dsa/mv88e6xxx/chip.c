@@ -6612,6 +6612,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.ptp_support = true,
 		.num_tx_queues = 4,
 		.ops = &mv88e6352_ops,
+		.arr_ts_mode = 0x10
 	},
 	[MV88E6361] = {
 		.prod_num = MV88E6XXX_PORT_SWITCH_ID_PROD_6361,

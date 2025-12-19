@@ -8,6 +8,8 @@
  *      Erik Hons <erik.hons@ni.com>
  *      Brandon Streiff <brandon.streiff@ni.com>
  *      Dane Wagner <dane.wagner@ni.com>
+ *
+ * Copyright (c) 2025 PADL Software Pty Ltd
  */
 
 #include "chip.h"
@@ -251,6 +253,64 @@ static int seq_match(struct sk_buff *skb, u16 ts_seqid)
 	return ts_seqid == ntohs(hdr->sequence_id);
 }
 
+static bool parse_embedded_ts(unsigned int arr_ts_mode,
+			      struct sk_buff *skb, u64 *ns)
+{
+	struct ptp_header *hdr;
+
+	BUG_ON(arr_ts_mode == 0);
+
+	*ns = 0;
+
+	/* arr_ts_mode == 1 is a special case which means the timestamp is at
+	 * the end of the frame; not all switches support this. Otherwise, it
+	 * is an offset into the PTP header where the RX timestamp is stored.
+	 */
+	if (arr_ts_mode == 1 && skb->len >= 4) {
+		*ns = (u64)get_unaligned_be32(&skb->data[skb->len - 4]);
+		skb_trim(skb, skb->len - 4);
+	} else if (arr_ts_mode + 4 <= sizeof(*hdr)) {
+		hdr = ptp_parse_header(skb, SKB_PTP_TYPE(skb));
+		if (hdr == NULL)
+			return false;
+
+		*ns = (u64)get_unaligned_be32((uint8_t *)hdr + arr_ts_mode);
+		memset((uint8_t *)hdr + arr_ts_mode, 0, 4);
+	} else {
+		return false;
+	}
+
+	return true;
+}
+
+static void mv88e6xxx_get_rxts_embedded(struct mv88e6xxx_chip *chip,
+					struct mv88e6xxx_port_hwtstamp *ps,
+					struct sk_buff *skb)
+{
+	struct sk_buff_head *rxq = &ps->rx_queue;
+	struct skb_shared_hwtstamps *shwt;
+	struct sk_buff_head received;
+	unsigned long flags;
+	u64 ns;
+
+	__skb_queue_head_init(&received);
+	spin_lock_irqsave(&rxq->lock, flags);
+	skb_queue_splice_tail_init(rxq, &received);
+	spin_unlock_irqrestore(&rxq->lock, flags);
+
+	for ( ; skb; skb = __skb_dequeue(&received)) {
+		if (parse_embedded_ts(chip->info->arr_ts_mode, skb, &ns)) {
+			mv88e6xxx_reg_lock(chip);
+			ns = timecounter_cyc2time(&chip->tstamp_tc, ns);
+			mv88e6xxx_reg_unlock(chip);
+			shwt = skb_hwtstamps(skb);
+			memset(shwt, 0, sizeof(*shwt));
+			shwt->hwtstamp = ns_to_ktime(ns);
+		}
+		netif_rx(skb);
+	}
+}
+
 static void mv88e6xxx_get_rxts(struct mv88e6xxx_chip *chip,
 			       struct mv88e6xxx_port_hwtstamp *ps,
 			       struct sk_buff *skb, u16 reg,
@@ -313,8 +373,21 @@ static void mv88e6xxx_rxtstamp_work(struct mv88e6xxx_chip *chip,
 	const struct mv88e6xxx_ptp_ops *ptp_ops = chip->info->ops->ptp_ops;
 	struct sk_buff *skb;
 
-	skb = skb_dequeue(&ps->rx_queue);
+	if (chip->info->arr_ts_mode) {
+		/* If arr_ts_mode is set, the timestamps are embedded in the
+		 * frames so a register read is not required. We still need a
+		 * work queue rather than processing inline because
+		 * timecounter_cyc2time() takes the global mutex and this
+		 * cannot be called from mv88e6xxx_port_rxtstamp().
+		 */
+		skb = skb_dequeue(&ps->rx_queue);
+		if (skb)
+			mv88e6xxx_get_rxts_embedded(chip, ps, skb);
 
+		return;
+	}
+
+	skb = skb_dequeue(&ps->rx_queue);
 	if (skb)
 		mv88e6xxx_get_rxts(chip, ps, skb, ptp_ops->arr0_sts_reg,
 				   &ps->rx_queue);
@@ -356,7 +429,7 @@ bool mv88e6xxx_port_rxtstamp(struct dsa_switch *ds, int port,
 
 	SKB_PTP_TYPE(skb) = type;
 
-	if (is_pdelay_msg(hdr))
+	if (!chip->info->arr_ts_mode && is_pdelay_msg(hdr))
 		skb_queue_tail(&ps->rx_queue2, skb);
 	else
 		skb_queue_tail(&ps->rx_queue, skb);
@@ -537,21 +610,47 @@ int mv88e6165_global_enable(struct mv88e6xxx_chip *chip)
 int mv88e6352_hwtstamp_port_disable(struct mv88e6xxx_chip *chip, int port,
 				    struct hwtstamp_config *config)
 {
-	return mv88e6xxx_port_ptp_write(chip, port, MV88E6XXX_PORT_PTP_CFG0,
-					MV88E6XXX_PORT_PTP_CFG0_DISABLE_PTP);
+	int err;
+
+	err = mv88e6xxx_port_ptp_write(chip, port, MV88E6XXX_PORT_PTP_CFG0,
+				       MV88E6XXX_PORT_PTP_CFG0_DISABLE_PTP);
+	if (err)
+		return err;
+
+	err = mv88e6xxx_port_ptp_write(chip, port, MV88E6XXX_PORT_PTP_CFG2, 0);
+	if (err)
+		return err;
+
+	return 0;
 }
 
 int mv88e6352_hwtstamp_port_enable(struct mv88e6xxx_chip *chip, int port,
 				   struct hwtstamp_config *config)
 {
 	u16 val;
+	int err;
+
+	/* note: some switches require ArrTSMode to be set when the port is
+	 * disabled. the 6352 appears to be an exception (or, the datasheet is
+	 * wrong).
+	 */
+	if (chip->info->arr_ts_mode) {
+		err = mv88e6xxx_port_ptp_write(chip, port, MV88E6XXX_PORT_PTP_CFG2,
+					       chip->info->arr_ts_mode << 8);
+		if (err)
+			return err;
+	}
 
 	if (config->rx_filter == HWTSTAMP_FILTER_PTP_V2_L2_EVENT)
 		val = MV88E6XXX_PORT_PTP_CFG0_TSPEC_8021AS;
 	else
 		val = MV88E6XXX_PORT_PTP_CFG0_DISABLE_TSPEC_MATCH;
 
-	return mv88e6xxx_port_ptp_write(chip, port, MV88E6XXX_PORT_PTP_CFG0, val);
+	err = mv88e6xxx_port_ptp_write(chip, port, MV88E6XXX_PORT_PTP_CFG0, val);
+	if (err)
+		return err;
+
+	return 0;
 }
 
 static int mv88e6xxx_hwtstamp_port_setup(struct mv88e6xxx_chip *chip, int port)
@@ -605,12 +704,14 @@ int mv88e6xxx_hwtstamp_setup(struct mv88e6xxx_chip *chip)
 	if (err)
 		return err;
 
-	/* Use ARRIVAL1 for peer delay messages. */
-	err = mv88e6xxx_ptp_write(chip, MV88E6XXX_PTP_TS_ARRIVAL_PTR,
-				  MV88E6XXX_PTP_MSGTYPE_PDLAY_REQ |
-				  MV88E6XXX_PTP_MSGTYPE_PDLAY_RES);
-	if (err)
-		return err;
+	if (!chip->info->arr_ts_mode) {
+		/* Use ARRIVAL1 for peer delay messages. */
+		err = mv88e6xxx_ptp_write(chip, MV88E6XXX_PTP_TS_ARRIVAL_PTR,
+					  MV88E6XXX_PTP_MSGTYPE_PDLAY_REQ |
+					  MV88E6XXX_PTP_MSGTYPE_PDLAY_RES);
+		if (err)
+			return err;
+	}
 
 	/* 88E6341 devices default to timestamping at the PHY, but this has
 	 * a hardware issue that results in unreliable timestamps. Force
