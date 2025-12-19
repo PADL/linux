@@ -31,6 +31,7 @@
 #include <linux/platform_device.h>
 #include <linux/platform_data/mv88e6xxx.h>
 #include <linux/property.h>
+#include <linux/ptp_classify.h>
 #include <linux/netdevice.h>
 #include <linux/gpio/consumer.h>
 #include <linux/phylink.h>
@@ -6601,6 +6602,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.ptp_support = true,
 		.qav = &mv88e6341_qav_info,
 		.ops = &mv88e6341_ops,
+		.arr_ts_mode = offsetof(struct ptp_header, reserved2),
 	},
 
 	[MV88E6350] = {
@@ -6685,6 +6687,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.ptp_support = true,
 		.qav = &mv88e6352_qav_info,
 		.ops = &mv88e6352_ops,
+		.arr_ts_mode = offsetof(struct ptp_header, reserved2),
 	},
 	[MV88E6361] = {
 		.prod_num = MV88E6XXX_PORT_SWITCH_ID_PROD_6361,
