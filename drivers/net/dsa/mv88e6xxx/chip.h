@@ -182,6 +182,9 @@ struct mv88e6xxx_info {
 	 * port 0, 1 means internal PHYs range starts at port 1, etc
 	 */
 	unsigned int internal_phys_offset;
+
+	/* Arrival timestamp mode */
+	unsigned int arr_ts_mode;
 };
 
 struct mv88e6xxx_atu_entry {
