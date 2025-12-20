@@ -14,6 +14,7 @@
 #include <linux/bitfield.h>
 
 #include "global2.h"
+#include "rmu.h"
 
 /* Offset 0x16: AVB Command Register
  * Offset 0x17: AVB Data Register
@@ -42,13 +43,18 @@ static int mv88e6xxx_g2_avb_read(struct mv88e6xxx_chip *chip, u16 readop,
 	int err;
 	int i;
 
-	err = mv88e6xxx_g2_avb_wait(chip);
-	if (err)
-		return err;
-
 	/* Hardware can only snapshot four words. */
 	if (len > 4)
 		return -E2BIG;
+
+	/* If RMU is available, coalesce requests into a single frame */
+	err = mv88e6xxx_rmu_avb_read(chip, readop, data, len);
+	if (!mv88e6xxx_rmu_can_mdio_fallback(chip, err))
+		return err;
+
+	err = mv88e6xxx_g2_avb_wait(chip);
+	if (err)
+		return err;
 
 	err = mv88e6xxx_g2_write(chip, MV88E6352_G2_AVB_CMD,
 				 MV88E6352_G2_AVB_CMD_BUSY | readop);
@@ -74,6 +80,11 @@ static int mv88e6xxx_g2_avb_write(struct mv88e6xxx_chip *chip, u16 writeop,
 				  u16 data)
 {
 	int err;
+
+	/* If RMU is available, coalesce requests into a single frame */
+	err = mv88e6xxx_rmu_avb_write(chip, writeop, data);
+	if (!mv88e6xxx_rmu_can_mdio_fallback(chip, err))
+		return err;
 
 	err = mv88e6xxx_g2_avb_wait(chip);
 	if (err)
