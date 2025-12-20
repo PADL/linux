@@ -12,6 +12,7 @@
 #include <net/dsa.h>
 #include "chip.h"
 #include "global1.h"
+#include "global2.h"
 #include "port.h"
 #include "rmu.h"
 
@@ -503,6 +504,143 @@ int mv88e6xxx_rmu_wait_bit(struct mv88e6xxx_chip *chip, int addr, int reg,
 
 	if ((ntohs(resp.value) & 0xff) == 0xff) {
 		dev_err(chip->dev, "RMU: wait on bit timed out\n");
+		return -ETIMEDOUT;
+	}
+
+	return 0;
+}
+
+int mv88e6xxx_rmu_avb_read(struct mv88e6xxx_chip *chip, u16 readop,
+			   u16 *data, int len)
+{
+	struct mv88e6xxx_rmu_avb_read_resp req, resp;
+	int req_resp_len;
+	int ret, i;
+
+	if (chip->rmu_state == MV88E6XXX_RMU_DISABLED ||
+	    (chip->rmu_flags & MV88E6XXX_RMU_IS_SLOW))
+		return -EOPNOTSUPP;
+
+	memset(&req, 0, sizeof(req));
+
+	req.rmu_header.format = MV88E6XXX_RMU_REQ_FORMAT_SOHO;
+	req.rmu_header.prodnr = MV88E6XXX_RMU_REQ_PAD;
+	req.rmu_header.code = MV88E6XXX_RMU_REQ_CODE_REG_RW;
+
+	req.wait0.cmd = MV88E6XXX_RMU_REQ_RW_0_WAIT_0(chip->info->global2_addr,
+						      MV88E6352_G2_AVB_CMD);
+	req.wait0.value = htons(__bf_shf(MV88E6352_G2_AVB_CMD_BUSY) << 8);
+
+	req.write.cmd = MV88E6XXX_RMU_REQ_RW_0_WRITE(chip->info->global2_addr,
+						     MV88E6352_G2_AVB_CMD);
+	req.write.value = htons(MV88E6352_G2_AVB_CMD_BUSY | readop);
+
+	req.wait1.cmd = MV88E6XXX_RMU_REQ_RW_0_WAIT_0(chip->info->global2_addr,
+						      MV88E6352_G2_AVB_CMD);
+	req.wait1.value = htons(__bf_shf(MV88E6352_G2_AVB_CMD_BUSY) << 8);
+
+	for (i = 0; i < len; i++) {
+		req.reads[i].cmd = MV88E6XXX_RMU_REQ_RW_0_READ(chip->info->global2_addr,
+							       MV88E6352_G2_AVB_DATA);
+		req.reads[i].value = 0;
+	}
+
+	req.reads[len].cmd = MV88E6XXX_RMU_REQ_RW_0_END;
+	req.reads[len].value = MV88E6XXX_RMU_REQ_RW_1_END;
+
+	req_resp_len = sizeof(struct mv88e6xxx_rmu_header) +
+		(3 + len + 1) * sizeof(struct mv88e6xxx_rmu_rw_command);
+	ret = mv88e6xxx_rmu_request(chip, &req, req_resp_len,
+				    &resp, req_resp_len,
+				    MV88E6XXX_RMU_REQUEST_TIMEOUT_MS);
+	if (ret < 0) {
+		dev_dbg(chip->dev, "RMU: error for command REQ_RW:AVB_READ %pe\n",
+			ERR_PTR(ret));
+		return ret;
+	}
+
+	if (ret < req_resp_len) {
+		dev_err(chip->dev, "RMU: AVB read returned wrong length: rx %d expecting %d\n",
+			ret, req_resp_len);
+		return -EPROTO;
+	}
+
+	if (resp.rmu_header.code != MV88E6XXX_RMU_RESP_CODE_REG_RW) {
+		dev_err(chip->dev, "RMU: AVB read returned wrong code %d\n",
+			be16_to_cpu(resp.rmu_header.code));
+		return -EPROTO;
+	}
+
+	if ((ntohs(resp.wait0.value) & 0xff) == 0xff ||
+	    (ntohs(resp.wait1.value) & 0xff) == 0xff) {
+		dev_err(chip->dev, "RMU: AVB read wait on bit timed out\n");
+		return -ETIMEDOUT;
+	}
+
+	for (i = 0; i < len; i++)
+		data[i] = ntohs(resp.reads[i].value);
+
+	return 0;
+}
+
+int mv88e6xxx_rmu_avb_write(struct mv88e6xxx_chip *chip, u16 writeop, u16 data)
+{
+	struct mv88e6xxx_rmu_avb_write_resp req, resp;
+	int ret;
+
+	if (chip->rmu_state == MV88E6XXX_RMU_DISABLED ||
+	    (chip->rmu_flags & MV88E6XXX_RMU_IS_SLOW))
+		return -EOPNOTSUPP;
+
+	memset(&req, 0, sizeof(req));
+
+	req.rmu_header.format = MV88E6XXX_RMU_REQ_FORMAT_SOHO;
+	req.rmu_header.prodnr = MV88E6XXX_RMU_REQ_PAD;
+	req.rmu_header.code = MV88E6XXX_RMU_REQ_CODE_REG_RW;
+
+	req.wait0.cmd = MV88E6XXX_RMU_REQ_RW_0_WAIT_0(chip->info->global2_addr,
+						      MV88E6352_G2_AVB_CMD);
+	req.wait0.value = htons(__bf_shf(MV88E6352_G2_AVB_CMD_BUSY) << 8);
+
+	req.data.cmd = MV88E6XXX_RMU_REQ_RW_0_WRITE(chip->info->global2_addr,
+						    MV88E6352_G2_AVB_DATA);
+	req.data.value = htons(data);
+
+	req.op.cmd = MV88E6XXX_RMU_REQ_RW_0_WRITE(chip->info->global2_addr,
+						  MV88E6352_G2_AVB_CMD);
+	req.op.value = htons(MV88E6352_G2_AVB_CMD_BUSY | writeop);
+
+	req.wait1.cmd = MV88E6XXX_RMU_REQ_RW_0_WAIT_0(chip->info->global2_addr,
+						      MV88E6352_G2_AVB_CMD);
+	req.wait1.value = htons(__bf_shf(MV88E6352_G2_AVB_CMD_BUSY) << 8);
+
+	req.end.cmd = MV88E6XXX_RMU_REQ_RW_0_END;
+	req.end.value = MV88E6XXX_RMU_REQ_RW_1_END;
+
+	ret = mv88e6xxx_rmu_request(chip, &req, sizeof(req),
+				    &resp, sizeof(resp),
+				    MV88E6XXX_RMU_REQUEST_TIMEOUT_MS);
+	if (ret < 0) {
+		dev_dbg(chip->dev, "RMU: error for command REQ_RW:AVB_WRITE %pe\n",
+			ERR_PTR(ret));
+		return ret;
+	}
+
+	if (ret < sizeof(resp)) {
+		dev_err(chip->dev, "RMU: AVB write returned wrong length: rx %d expecting %zd\n",
+			ret, sizeof(resp));
+		return -EPROTO;
+	}
+
+	if (resp.rmu_header.code != MV88E6XXX_RMU_RESP_CODE_REG_RW) {
+		dev_err(chip->dev, "RMU: AVB write returned wrong code %d\n",
+			be16_to_cpu(resp.rmu_header.code));
+		return -EPROTO;
+	}
+
+	if ((ntohs(resp.wait0.value) & 0xff) == 0xff ||
+	    (ntohs(resp.wait1.value) & 0xff) == 0xff) {
+		dev_err(chip->dev, "RMU: AVB write wait on bit timed out\n");
 		return -ETIMEDOUT;
 	}
 
