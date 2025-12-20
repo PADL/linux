@@ -396,7 +396,7 @@ int mv88e6xxx_rmu_wait_bit(struct mv88e6xxx_chip *chip, int addr, int reg,
 		MV88E6XXX_RMU_REQ_CODE_REG_RW,
 		val ? MV88E6XXX_RMU_REQ_RW_0_WAIT_1(addr, reg) :
 		MV88E6XXX_RMU_REQ_RW_0_WAIT_0(addr, reg),
-		htons(bit),
+		htons((bit & 0xf) << 8),
 		MV88E6XXX_RMU_REQ_RW_0_END,
 		MV88E6XXX_RMU_REQ_RW_1_END,
 	};
