@@ -69,6 +69,29 @@ struct mv88e6xxx_rmu_rw_resp {
 	__be16 end1;
 } __packed;
 
+struct mv88e6xxx_rmu_rw_command {
+	__be16 cmd;
+	__be16 value;
+} __packed;
+
+struct mv88e6xxx_rmu_avb_read_resp {
+	struct mv88e6xxx_rmu_header rmu_header;
+	struct mv88e6xxx_rmu_rw_command wait0;
+	struct mv88e6xxx_rmu_rw_command write;
+	struct mv88e6xxx_rmu_rw_command wait1;
+	struct mv88e6xxx_rmu_rw_command reads[4];
+	struct mv88e6xxx_rmu_rw_command end;
+} __packed;
+
+struct mv88e6xxx_rmu_avb_write_resp {
+	struct mv88e6xxx_rmu_header rmu_header;
+	struct mv88e6xxx_rmu_rw_command wait0;
+	struct mv88e6xxx_rmu_rw_command data;
+	struct mv88e6xxx_rmu_rw_command op;
+	struct mv88e6xxx_rmu_rw_command wait1;
+	struct mv88e6xxx_rmu_rw_command end;
+} __packed;
+
 /* number of RMU MIB statistics, by type, in octets */
 #define MV88E6XXX_RMU_STATS_TYPE_DATA0_LEN	128
 #define MV88E6XXX_RMU_STATS_TYPE_PORT_LEN	12
@@ -101,6 +124,9 @@ void mv88e6xxx_rmu_frame2reg_handler(struct dsa_switch *ds,
 				     u8 seqno);
 int mv88e6xxx_detect_rmu_only(struct mv88e6xxx_chip *chip);
 int mv88e6xxx_rmu_only_early_setup(struct mv88e6xxx_chip *chip);
+int mv88e6xxx_rmu_avb_read(struct mv88e6xxx_chip *chip, u16 readop,
+			   u16 *data, int len);
+int mv88e6xxx_rmu_avb_write(struct mv88e6xxx_chip *chip, u16 writeop, u16 data);
 
 static inline bool
 mv88e6xxx_is_rmu_only_cpu_port(struct mv88e6xxx_chip *chip, int port)
