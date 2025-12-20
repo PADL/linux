@@ -82,6 +82,24 @@ struct mv88e6xxx_rmu_rw_mac_data_resp {
 	struct mv88e6xxx_rmu_rw_command end;
 } __packed;
 
+struct mv88e6xxx_rmu_avb_read_resp {
+	struct mv88e6xxx_rmu_header rmu_header;
+	struct mv88e6xxx_rmu_rw_command wait0;
+	struct mv88e6xxx_rmu_rw_command write;
+	struct mv88e6xxx_rmu_rw_command wait1;
+	struct mv88e6xxx_rmu_rw_command reads[4];
+	struct mv88e6xxx_rmu_rw_command end;
+} __packed;
+
+struct mv88e6xxx_rmu_avb_write_resp {
+	struct mv88e6xxx_rmu_header rmu_header;
+	struct mv88e6xxx_rmu_rw_command wait0;
+	struct mv88e6xxx_rmu_rw_command data;
+	struct mv88e6xxx_rmu_rw_command op;
+	struct mv88e6xxx_rmu_rw_command wait1;
+	struct mv88e6xxx_rmu_rw_command end;
+} __packed;
+
 struct mv88e6xxx_rmu_atu_entry {
 	__be16 state_trunk_dpv;
 	__be16 atu_01;
@@ -148,6 +166,9 @@ int mv88e6xxx_rmu_atu_mac_data_read(struct mv88e6xxx_chip *chip,
 				    struct mv88e6xxx_atu_entry *entry);
 int mv88e6xxx_rmu_atu_mac_data_write(struct mv88e6xxx_chip *chip,
 				     const struct mv88e6xxx_atu_entry *entry);
+int mv88e6xxx_rmu_avb_read(struct mv88e6xxx_chip *chip, u16 readop,
+			   u16 *data, int len);
+int mv88e6xxx_rmu_avb_write(struct mv88e6xxx_chip *chip, u16 writeop, u16 data);
 
 static inline bool
 mv88e6xxx_is_rmu_only_cpu_port(struct mv88e6xxx_chip *chip, int port)
