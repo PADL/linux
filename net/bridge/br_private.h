@@ -16,7 +16,9 @@
 #include <net/route.h>
 #include <net/ip6_fib.h>
 #include <net/pkt_cls.h>
+#include <linux/icmpv6.h>
 #include <linux/if_vlan.h>
+#include <linux/igmp.h>
 #include <linux/rhashtable.h>
 #include <linux/refcount.h>
 
@@ -630,8 +632,28 @@ struct br_input_skb_cb {
 
 #ifdef CONFIG_BRIDGE_IGMP_SNOOPING
 # define BR_INPUT_SKB_CB_MROUTERS_ONLY(__skb)	(BR_INPUT_SKB_CB(__skb)->mrouters_only)
+
+/* Returns true if the skb carries an IGMP/MLD general or group-specific
+ * query.  Per RFC 4541 and common snooping switch behaviour, queries
+ * received on a multicast-router port must be forwarded to all other
+ * ports so that downstream hosts can respond to the elected querier.
+ * They must therefore bypass the per-port BR_MCAST_FLOOD gate in
+ * br_flood().
+ */
+static inline bool br_multicast_skb_is_query(const struct sk_buff *skb)
+{
+	u8 type = BR_INPUT_SKB_CB(skb)->igmp;
+
+	return type == IGMP_HOST_MEMBERSHIP_QUERY ||	/* 0x11, covers IGMPv1/v2/v3 */
+	       type == ICMPV6_MGM_QUERY;		/* 130,  covers MLDv1/v2    */
+}
 #else
 # define BR_INPUT_SKB_CB_MROUTERS_ONLY(__skb)	(0)
+
+static inline bool br_multicast_skb_is_query(const struct sk_buff *skb)
+{
+	return false;
+}
 #endif
 
 #define br_printk(level, br, format, args...)	\
