@@ -218,7 +218,8 @@ void br_flood(struct net_bridge *br, struct sk_buff *skb,
 				continue;
 			break;
 		case BR_PKT_MULTICAST:
-			if (!(p->flags & BR_MCAST_FLOOD) && skb->dev != br->dev)
+			if (!(p->flags & BR_MCAST_FLOOD) && skb->dev != br->dev &&
+			    !br_multicast_skb_is_query(skb))
 				continue;
 			break;
 		case BR_PKT_BROADCAST:
