@@ -147,8 +147,10 @@ static int mv88e6xxx_rmu_request(struct mv88e6xxx_chip *chip,
 
 	edsa = chip->tag_protocol == DSA_TAG_PROTO_EDSA;
 
-	if (chip->ds->tagger_data == NULL)
+	if (chip->ds->tagger_data == NULL) {
+		kfree_skb(skb);
 		return -EOPNOTSUPP; /* can happen on teardown */
+	}
 
 	mv88e6xxx_rmu_create_l2(chip->ds, chip, skb, edsa);
 	skb->dev = chip->rmu_conduit;
