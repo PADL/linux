@@ -144,7 +144,7 @@ static int mv88e6xxx_rmu_request(struct mv88e6xxx_chip *chip,
 		return -EINVAL;
 	}
 
-	skb = dev_alloc_skb(64);
+	skb = dev_alloc_skb(req_len + EDSA_HLEN + 2 * ETH_ALEN + 2);
 	if (!skb)
 		return -ENOMEM;
 
