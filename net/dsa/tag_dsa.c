@@ -230,7 +230,7 @@ static struct sk_buff *dsa_rcv_ll(struct sk_buff *skb, struct net_device *dev,
 			if (!ds)
 				return NULL;
 			tagger_data = ds->tagger_data;
-			if (likely(tagger_data->rmu_frame2reg))
+			if (likely(tagger_data && tagger_data->rmu_frame2reg))
 				tagger_data->rmu_frame2reg(ds, skb, seqno);
 			return NULL;
 		}
