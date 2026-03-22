@@ -580,12 +580,16 @@ void mv88e6xxx_rmu_frame2reg_handler(struct dsa_switch *ds,
 		goto drop;
 	}
 
+	if (skb->len < 4 + sizeof(*rmu_header)) {
+		dev_dbg_ratelimited(ds->dev, "RMU: response too short (%d bytes)\n",
+				    skb->len);
+		dsa_inband_complete(&chip->rmu_inband, NULL, 0, -ETIMEDOUT);
+		goto drop;
+	}
+
 	rmu_header = (struct mv88e6xxx_rmu_header *)(skb->data + 4);
 	resp_len = skb->len - 4;
-	if (resp_len == 0) {
-		dev_dbg_ratelimited(ds->dev, "RMU: zero length response\n");
-		err = -ETIMEDOUT;
-	} else if (rmu_header->format != MV88E6XXX_RMU_RESP_FORMAT_1 &&
+	if (rmu_header->format != MV88E6XXX_RMU_RESP_FORMAT_1 &&
 	    rmu_header->format != MV88E6XXX_RMU_RESP_FORMAT_2) {
 		dev_dbg_ratelimited(ds->dev, "RMU: invalid format: rx %d\n",
 				    be16_to_cpu(rmu_header->format));
