@@ -499,7 +499,6 @@ void mv88e6xxx_rmu_conduit_state_change(struct dsa_switch *ds,
 
 	if (operational && chip->info->ops->rmu_enable) {
 		ret = chip->info->ops->rmu_enable(chip, port);
-
 		if (ret == -EOPNOTSUPP) {
 			dev_info(chip->dev, "RMU: not usable on this board");
 			goto out;
@@ -516,18 +515,24 @@ void mv88e6xxx_rmu_conduit_state_change(struct dsa_switch *ds,
 		if (ret < 0) {
 			dev_err(chip->dev, "RMU: initialization check failed %pe",
 				ERR_PTR(ret));
-			goto out;
+			goto out_disable;
 		}
 
 		start = ktime_get();
 		ret = mv88e6xxx_port_read(chip, 0, MV88E6XXX_PORT_SWITCH_ID,
 					  &id);
+		if (ret < 0) {
+			dev_err(chip->dev, "RMU: SMI latency read failed %pe",
+				ERR_PTR(ret));
+			goto out_disable;
+		}
 		chip->smi_read_latency = ktime_get() - start;
 		chip->rmu_state = MV88E6XXX_RMU_ENABLED;
 
 		dev_info(chip->dev, "RMU: enabled on port %d via conduit device %s",
 			 port, chip->rmu_conduit->name);
 	} else {
+out_disable:
 		if (chip->info->ops->rmu_disable)
 			chip->info->ops->rmu_disable(chip);
 
