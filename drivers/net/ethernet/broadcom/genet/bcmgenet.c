@@ -3978,6 +3978,14 @@ static int bcmgenet_probe(struct platform_device *pdev)
 	dev->hw_features |= dev->features;
 	dev->vlan_features |= dev->features;
 
+	/* Allow an MTU large enough for a DSA tagger (e.g. EDSA, 8 bytes)
+	 * to be appended without exceeding ether_setup()'s default of
+	 * ETH_DATA_LEN (1500). The hardware frame limit is set via
+	 * UMAC_MAX_FRAME_LEN = ENET_MAX_MTU_SIZE (1536) elsewhere.
+	 * Do not raise this above ~2000 — see rpi/linux#5561.
+	 */
+	dev->max_mtu = ETH_DATA_LEN + 8;
+
 	netdev_sw_irq_coalesce_default_on(dev);
 
 	/* Request the WOL interrupt and advertise suspend if available */
