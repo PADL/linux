@@ -20,7 +20,7 @@ static const u8 mv88e6xxx_rmu_dest_addr[ETH_ALEN] = {
 };
 
 static void mv88e6xxx_rmu_create_l2(struct dsa_switch *ds,
-				    struct mv88e6xxx_chip *chip,
+				    struct net_device *conduit,
 				    struct sk_buff *skb,
 				    bool edsa)
 {
@@ -41,7 +41,7 @@ static void mv88e6xxx_rmu_create_l2(struct dsa_switch *ds,
 	eth = skb_push(skb, ETH_ALEN * 2);
 
 	memcpy(eth->h_dest, mv88e6xxx_rmu_dest_addr, ETH_ALEN);
-	ether_addr_copy(eth->h_source, chip->rmu_conduit->dev_addr);
+	ether_addr_copy(eth->h_source, conduit->dev_addr);
 	skb_reset_network_header(skb);
 }
 
@@ -128,12 +128,19 @@ static int mv88e6xxx_rmu_request(struct mv88e6xxx_chip *chip,
 				 void *resp, unsigned int resp_len,
 				 int timeout_ms)
 {
+	struct net_device *conduit;
 	struct sk_buff *skb;
 	unsigned char *data;
 	bool edsa;
 
-	if (!chip->rmu_conduit) {
-		dev_err(chip->dev, "RMU: conduit device uninitialized");
+	/* Capture conduit once: it can be cleared concurrently when the
+	 * conduit goes down (e.g. during reboot). Also guard against the
+	 * conduit being torn down out from under us, in which case its
+	 * dev_addr may already have been released.
+	 */
+	conduit = READ_ONCE(chip->rmu_conduit);
+	if (unlikely(!conduit || !conduit->dev_addr)) {
+		dev_err_ratelimited(chip->dev, "RMU: conduit device unavailable");
 		return -EINVAL;
 	}
 
@@ -152,8 +159,8 @@ static int mv88e6xxx_rmu_request(struct mv88e6xxx_chip *chip,
 		return -EOPNOTSUPP; /* can happen on teardown */
 	}
 
-	mv88e6xxx_rmu_create_l2(chip->ds, chip, skb, edsa);
-	skb->dev = chip->rmu_conduit;
+	mv88e6xxx_rmu_create_l2(chip->ds, conduit, skb, edsa);
+	skb->dev = conduit;
 
 	return __mv88e6xxx_rmu_request_retry(chip, skb, edsa,
 					     resp, resp_len,
