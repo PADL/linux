@@ -7919,6 +7919,12 @@ static void mv88e6xxx_shutdown_common(struct device *dev)
 	if (!ds)
 		return;
 
+	/* DSA core does not call ->teardown on .shutdown, so stop PTP
+	 * polling here before the conduit goes away. Otherwise the work
+	 * can race teardown and dereference a stale conduit->dev_addr.
+	 */
+	mv88e6xxx_ptp_shutdown(ds->priv);
+
 	dsa_switch_shutdown(ds);
 	dev_set_drvdata(dev, NULL);
 }
