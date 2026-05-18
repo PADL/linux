@@ -551,14 +551,24 @@ int mv88e6xxx_ptp_setup(struct mv88e6xxx_chip *chip)
 	return 0;
 }
 
-/* This must never be called holding the register lock */
-void mv88e6xxx_ptp_free(struct mv88e6xxx_chip *chip)
+/* Cancel any pending PTP polling work. Safe to call from .shutdown
+ * paths where the PTP clock itself stays registered.
+ * This must never be called holding the register lock.
+ */
+void mv88e6xxx_ptp_shutdown(struct mv88e6xxx_chip *chip)
 {
 	if (chip->ptp_clock) {
 		cancel_delayed_work_sync(&chip->overflow_work);
 		if (chip->info->ops->ptp_ops->event_work)
 			cancel_delayed_work_sync(&chip->tai_event_work);
+	}
+}
 
+/* This must never be called holding the register lock */
+void mv88e6xxx_ptp_free(struct mv88e6xxx_chip *chip)
+{
+	if (chip->ptp_clock) {
+		mv88e6xxx_ptp_shutdown(chip);
 		ptp_clock_unregister(chip->ptp_clock);
 		chip->ptp_clock = NULL;
 	}
