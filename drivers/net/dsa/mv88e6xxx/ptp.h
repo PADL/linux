@@ -68,6 +68,7 @@
 
 int mv88e6xxx_ptp_setup(struct mv88e6xxx_chip *chip);
 void mv88e6xxx_ptp_free(struct mv88e6xxx_chip *chip);
+void mv88e6xxx_ptp_shutdown(struct mv88e6xxx_chip *chip);
 
 #define ptp_to_chip(ptp) container_of(ptp, struct mv88e6xxx_chip,	\
 				      ptp_clock_info)
@@ -84,6 +85,10 @@ static inline int mv88e6xxx_ptp_setup(struct mv88e6xxx_chip *chip)
 }
 
 static inline void mv88e6xxx_ptp_free(struct mv88e6xxx_chip *chip)
+{
+}
+
+static inline void mv88e6xxx_ptp_shutdown(struct mv88e6xxx_chip *chip)
 {
 }
 
