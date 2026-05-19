@@ -686,6 +686,25 @@ static int bcm54xx_resume(struct phy_device *phydev)
 	return bcm54xx_config_init(phydev);
 }
 
+/*
+ * On platforms where the PHY interrupt pin is not routed to a SoC GPIO
+ * (e.g. Raspberry Pi CM4 -- BCM54213PE INTR pin is NC on the SoM),
+ * phylib falls back to polling for link-state changes. The default
+ * polling interval is HZ (1s), which adds up to ~1s of latency between
+ * actual link-up and the kernel observing it -- noticeable during
+ * first-boot bring-up when autoneg already takes a couple of seconds.
+ *
+ * Poll aggressively while waiting for link; revert to the default
+ * interval once the link is up to keep steady-state MDIO traffic low.
+ * Mirrors the adaptive-polling pattern in dp83tg720.c.
+ */
+static unsigned int bcm54xx_get_next_update_time(struct phy_device *phydev)
+{
+	if (phydev->link)
+		return HZ;
+	return HZ / 10;
+}
+
 static int bcm54810_read_mmd(struct phy_device *phydev, int devnum, u16 regnum)
 {
 	return -EOPNOTSUPP;
@@ -1539,6 +1558,7 @@ static struct phy_driver broadcom_drivers[] = {
 	.config_init	= bcm54xx_config_init,
 	.config_intr	= bcm_phy_config_intr,
 	.handle_interrupt = bcm_phy_handle_interrupt,
+	.get_next_update_time = bcm54xx_get_next_update_time,
 	.link_change_notify	= bcm54xx_link_change_notify,
 	.suspend	= bcm54xx_suspend,
 	.resume		= bcm54xx_resume,
