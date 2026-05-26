@@ -298,6 +298,7 @@ void br_multicast_flood(struct net_bridge_mdb_entry *mdst,
 	struct net_bridge_port *prev = NULL;
 	struct net_bridge_port_group *p;
 	bool allow_mode_include = true;
+	bool restrict_stream = false;
 	struct hlist_node *rp;
 
 	rp = br_multicast_get_first_rport_node(brmctx, skb);
@@ -307,6 +308,24 @@ void br_multicast_flood(struct net_bridge_mdb_entry *mdst,
 		if (br_multicast_should_handle_mode(brmctx, mdst->addr.proto) &&
 		    br_multicast_is_star_g(&mdst->addr))
 			allow_mode_include = false;
+
+		/* If the frame's VLAN PCP maps to a non-zero traffic class on
+		 * the bridge netdev and at least one port group is marked as
+		 * stream-reserved (802.1Qat SRP-managed), restrict delivery to
+		 * flagged port groups and suppress delivery to router ports.
+		 */
+		if (skb_vlan_tag_present(skb) &&
+		    netdev_get_prio_tc_map(brmctx->br->dev,
+					   skb_vlan_tag_get_prio(skb))) {
+			const struct net_bridge_port_group *q;
+
+			for (q = p; q; q = rcu_dereference(q->next)) {
+				if (q->flags & MDB_PG_FLAGS_STREAM_RESERVED) {
+					restrict_stream = true;
+					break;
+				}
+			}
+		}
 	} else {
 		p = NULL;
 		br_tc_skb_miss_set(skb, true);
@@ -314,12 +333,17 @@ void br_multicast_flood(struct net_bridge_mdb_entry *mdst,
 
 	while (p || rp) {
 		struct net_bridge_port *port, *lport, *rport;
+		bool pg_reserved;
 
 		lport = p ? p->key.port : NULL;
 		rport = br_multicast_rport_from_node_skb(rp, skb);
+		pg_reserved = p && (p->flags & MDB_PG_FLAGS_STREAM_RESERVED);
 
 		if ((unsigned long)lport > (unsigned long)rport) {
 			port = lport;
+
+			if (restrict_stream && !pg_reserved)
+				goto delivered;
 
 			if (port->flags & BR_MULTICAST_TO_UNICAST) {
 				maybe_deliver_addr(lport, skb, p->eth_addr,
@@ -332,6 +356,14 @@ void br_multicast_flood(struct net_bridge_mdb_entry *mdst,
 				goto delivered;
 		} else {
 			port = rport;
+
+			/* Suppress delivery to router ports for SR streams,
+			 * but if this port is also a stream-reserved member
+			 * (lport == rport) it is a legitimate listener and
+			 * must still receive the frame.
+			 */
+			if (restrict_stream && (lport != rport || !pg_reserved))
+				goto delivered;
 		}
 
 		prev = maybe_deliver(prev, port, skb, local_orig);
