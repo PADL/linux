@@ -132,9 +132,17 @@ fail:
 	return -EMSGSIZE;
 }
 
+static bool br_mdb_state_is_permanent(u8 state)
+{
+	return state == MDB_PERMANENT || state == MDB_DYNAMIC_RESERVATION;
+}
+
 static void __mdb_entry_fill_flags(struct br_mdb_entry *e, unsigned char flags)
 {
-	e->state = flags & MDB_PG_FLAGS_PERMANENT;
+	if (flags & MDB_PG_FLAGS_DYNAMIC_RESERVATION)
+		e->state = MDB_DYNAMIC_RESERVATION;
+	else
+		e->state = flags & MDB_PG_FLAGS_PERMANENT;
 	e->flags = 0;
 	if (flags & MDB_PG_FLAGS_OFFLOAD)
 		e->flags |= MDB_FLAGS_OFFLOAD;
@@ -261,7 +269,8 @@ static int __mdb_fill_info(struct sk_buff *skb,
 #endif
 	} else {
 		ether_addr_copy(e.addr.u.mac_addr, mp->addr.dst.mac_addr);
-		e.state = MDB_PERMANENT;
+		if (!e.state)
+			e.state = MDB_PERMANENT;
 	}
 	e.addr.proto = mp->addr.proto;
 	nest_ent = nla_nest_start_noflag(skb,
@@ -828,8 +837,10 @@ static int br_mdb_add_group_src_fwd(const struct br_mdb_config *cfg,
 		return PTR_ERR(sgmp);
 	}
 
-	if (cfg->entry->state == MDB_PERMANENT)
+	if (br_mdb_state_is_permanent(cfg->entry->state))
 		flags |= MDB_PG_FLAGS_PERMANENT;
+	if (cfg->entry->state == MDB_DYNAMIC_RESERVATION)
+		flags |= MDB_PG_FLAGS_DYNAMIC_RESERVATION;
 	if (cfg->filter_mode == MCAST_EXCLUDE)
 		flags |= MDB_PG_FLAGS_BLOCKED;
 
@@ -1058,6 +1069,10 @@ static int br_mdb_add_group(const struct br_mdb_config *cfg,
 
 	/* host join */
 	if (!port) {
+		if (entry->state == MDB_DYNAMIC_RESERVATION) {
+			NL_SET_ERR_MSG_MOD(extack, "Host groups cannot use dynamic reservation");
+			return -EINVAL;
+		}
 		if (mp->host_joined && !(cfg->nlflags & NLM_F_REPLACE)) {
 			NL_SET_ERR_MSG_MOD(extack, "Group is already joined by host");
 			return -EEXIST;
@@ -1069,8 +1084,10 @@ static int br_mdb_add_group(const struct br_mdb_config *cfg,
 		return 0;
 	}
 
-	if (entry->state == MDB_PERMANENT)
+	if (br_mdb_state_is_permanent(entry->state))
 		flags |= MDB_PG_FLAGS_PERMANENT;
+	if (entry->state == MDB_DYNAMIC_RESERVATION)
+		flags |= MDB_PG_FLAGS_DYNAMIC_RESERVATION;
 
 	if (br_multicast_is_star_g(&group))
 		return br_mdb_add_group_star_g(cfg, mp, brmctx, flags, extack);
@@ -1320,13 +1337,15 @@ int br_mdb_add(struct net_device *dev, struct nlattr *tb[], u16 nlmsg_flags,
 		}
 	}
 
-	if (br_group_is_l2(&cfg.group) && cfg.entry->state != MDB_PERMANENT) {
+	if (br_group_is_l2(&cfg.group) &&
+	    !br_mdb_state_is_permanent(cfg.entry->state)) {
 		NL_SET_ERR_MSG_MOD(extack, "Only permanent L2 entries allowed");
 		goto out;
 	}
 
 	if (cfg.p) {
-		if (cfg.p->state == BR_STATE_DISABLED && cfg.entry->state != MDB_PERMANENT) {
+		if (cfg.p->state == BR_STATE_DISABLED &&
+		    !br_mdb_state_is_permanent(cfg.entry->state)) {
 			NL_SET_ERR_MSG_MOD(extack, "Port is in disabled state and entry is not permanent");
 			goto out;
 		}
