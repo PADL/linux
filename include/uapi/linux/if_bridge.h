@@ -705,6 +705,7 @@ struct br_mdb_entry {
 #define MDB_FLAGS_STAR_EXCL		(1 << 2)
 #define MDB_FLAGS_BLOCKED		(1 << 3)
 #define MDB_FLAGS_OFFLOAD_FAILED	(1 << 4)
+#define MDB_FLAGS_STREAM_RESERVED	(1 << 5)
 	__u8 flags;
 	__u16 vid;
 	struct {
@@ -746,6 +747,10 @@ enum {
 /* [MDBA_SET_ENTRY_ATTRS] = {
  *    [MDBE_ATTR_xxx]
  *    ...
+ *    [MDBE_ATTR_FLAGS]
+ *       u32, a mask of MDB_FLAGS_* values to set on the entry. Valid only
+ *       for port-group entries; currently only MDB_FLAGS_STREAM_RESERVED
+ *       may be set from user space.
  * }
  */
 enum {
@@ -760,6 +765,7 @@ enum {
 	MDBE_ATTR_IFINDEX,
 	MDBE_ATTR_SRC_VNI,
 	MDBE_ATTR_STATE_MASK,
+	MDBE_ATTR_FLAGS,
 	__MDBE_ATTR_MAX,
 };
 #define MDBE_ATTR_MAX (__MDBE_ATTR_MAX - 1)
