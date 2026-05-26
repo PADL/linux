@@ -317,6 +317,7 @@ struct net_bridge_fdb_flush_desc {
 #define MDB_PG_FLAGS_STAR_EXCL		BIT(3)
 #define MDB_PG_FLAGS_BLOCKED		BIT(4)
 #define MDB_PG_FLAGS_OFFLOAD_FAILED	BIT(5)
+#define MDB_PG_FLAGS_DYNAMIC_RESERVATION	BIT(6)
 
 #define PG_SRC_ENT_LIMIT	32
 

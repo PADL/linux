@@ -699,6 +699,7 @@ struct br_mdb_entry {
 	__u32 ifindex;
 #define MDB_TEMPORARY 0
 #define MDB_PERMANENT 1
+#define MDB_DYNAMIC_RESERVATION 2
 	__u8 state;
 #define MDB_FLAGS_OFFLOAD		(1 << 0)
 #define MDB_FLAGS_FAST_LEAVE		(1 << 1)
@@ -747,6 +748,9 @@ enum {
  *    [MDBE_ATTR_xxx]
  *    ...
  * }
+ *
+ * An entry with state MDB_DYNAMIC_RESERVATION is a permanent entry that also
+ * marks an 802.1Qat reserved stream. It is accepted only on port-group entries.
  */
 enum {
 	MDBE_ATTR_UNSPEC,
