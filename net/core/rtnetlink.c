@@ -6698,7 +6698,8 @@ static int rtnl_validate_mdb_entry(const struct nlattr *attr,
 		return -EINVAL;
 	}
 
-	if (entry->state != MDB_PERMANENT && entry->state != MDB_TEMPORARY) {
+	if (entry->state != MDB_PERMANENT && entry->state != MDB_TEMPORARY &&
+	    entry->state != MDB_DYNAMIC_RESERVATION) {
 		NL_SET_ERR_MSG(extack, "Unknown entry state");
 		return -EINVAL;
 	}
@@ -6768,7 +6769,8 @@ static int rtnl_validate_mdb_entry_del_bulk(const struct nlattr *attr,
 		return -EINVAL;
 	}
 
-	if (entry->state != MDB_PERMANENT && entry->state != MDB_TEMPORARY) {
+	if (entry->state != MDB_PERMANENT && entry->state != MDB_TEMPORARY &&
+	    entry->state != MDB_DYNAMIC_RESERVATION) {
 		NL_SET_ERR_MSG(extack, "Unknown entry state");
 		return -EINVAL;
 	}
