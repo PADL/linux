@@ -288,6 +288,16 @@ static void maybe_deliver_addr(struct net_bridge_port *p, struct sk_buff *skb,
 	__br_forward(p, skb, local_orig);
 }
 
+/* IEEE 802.1Q-2018 Annex L SR Class B (PCP 2) and Class A (PCP 3).
+ *
+ * Hard-coded here as an example for the initial implementation of
+ * MDB_FLAGS_STREAM_RESERVED admission control. If real-world
+ * deployments need a different mapping (e.g. some profiles or chips
+ * use different PCPs for SR classes), this should be replaced by a
+ * per-bridge attribute.
+ */
+#define BR_STREAM_RESERVED_PCP_MASK	(BIT(2) | BIT(3))
+
 /* called with rcu_read_lock */
 void br_multicast_flood(struct net_bridge_mdb_entry *mdst,
 			struct sk_buff *skb,
@@ -298,6 +308,7 @@ void br_multicast_flood(struct net_bridge_mdb_entry *mdst,
 	struct net_bridge_port *prev = NULL;
 	struct net_bridge_port_group *p;
 	bool allow_mode_include = true;
+	bool restrict_stream = false;
 	struct hlist_node *rp;
 
 	rp = br_multicast_get_first_rport_node(brmctx, skb);
@@ -307,6 +318,26 @@ void br_multicast_flood(struct net_bridge_mdb_entry *mdst,
 		if (br_multicast_should_handle_mode(brmctx, mdst->addr.proto) &&
 		    br_multicast_is_star_g(&mdst->addr))
 			allow_mode_include = false;
+
+		/* If the frame carries a VLAN PCP corresponding to an SR
+		 * Class, and at least one port group is marked
+		 * stream-reserved, restrict delivery to flagged pgs and
+		 * suppress delivery to router ports. SR streams are
+		 * bandwidth-reserved within a single L2 domain and must
+		 * not leak to other ports.
+		 */
+		if (skb_vlan_tag_present(skb) &&
+		    (BIT(skb_vlan_tag_get_prio(skb)) &
+		     BR_STREAM_RESERVED_PCP_MASK)) {
+			const struct net_bridge_port_group *q;
+
+			for (q = p; q; q = rcu_dereference(q->next)) {
+				if (q->flags & MDB_PG_FLAGS_STREAM_RESERVED) {
+					restrict_stream = true;
+					break;
+				}
+			}
+		}
 	} else {
 		p = NULL;
 		br_tc_skb_miss_set(skb, true);
@@ -321,6 +352,10 @@ void br_multicast_flood(struct net_bridge_mdb_entry *mdst,
 		if ((unsigned long)lport > (unsigned long)rport) {
 			port = lport;
 
+			if (restrict_stream &&
+			    !(p->flags & MDB_PG_FLAGS_STREAM_RESERVED))
+				goto delivered;
+
 			if (port->flags & BR_MULTICAST_TO_UNICAST) {
 				maybe_deliver_addr(lport, skb, p->eth_addr,
 						   local_orig);
@@ -332,6 +367,9 @@ void br_multicast_flood(struct net_bridge_mdb_entry *mdst,
 				goto delivered;
 		} else {
 			port = rport;
+
+			if (restrict_stream)
+				goto delivered;
 		}
 
 		prev = maybe_deliver(prev, port, skb, local_orig);
