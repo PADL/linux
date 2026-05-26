@@ -6905,6 +6905,10 @@ static int mv88e6xxx_port_mdb_add(struct dsa_switch *ds, int port,
 	else
 		state = MV88E6XXX_G1_ATU_DATA_STATE_MC_STATIC;
 
+	dev_info(chip->dev,
+		 "p%d: MDB add %pM vid=%u flags=0x%x -> ATU state=0x%x\n",
+		 port, mdb->addr, mdb->vid, mdb->flags, state);
+
 	mv88e6xxx_reg_lock(chip);
 
 	/* The ATU AVB bit is per-entry (per (FID, MAC)) and applies to every
