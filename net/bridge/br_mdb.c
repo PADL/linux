@@ -146,6 +146,8 @@ static void __mdb_entry_fill_flags(struct br_mdb_entry *e, unsigned char flags)
 		e->flags |= MDB_FLAGS_BLOCKED;
 	if (flags & MDB_PG_FLAGS_OFFLOAD_FAILED)
 		e->flags |= MDB_FLAGS_OFFLOAD_FAILED;
+	if (flags & MDB_PG_FLAGS_STREAM_RESERVED)
+		e->flags |= MDB_FLAGS_STREAM_RESERVED;
 }
 
 static void __mdb_entry_to_br_ip(struct br_mdb_entry *entry, struct br_ip *ip,
@@ -664,6 +666,7 @@ static const struct nla_policy br_mdbe_attrs_pol[MDBE_ATTR_MAX + 1] = {
 						  MCAST_INCLUDE),
 	[MDBE_ATTR_SRC_LIST] = NLA_POLICY_NESTED(br_mdbe_src_list_pol),
 	[MDBE_ATTR_RTPROT] = NLA_POLICY_MIN(NLA_U8, RTPROT_STATIC),
+	[MDBE_ATTR_FLAGS] = NLA_POLICY_MASK(NLA_U32, MDB_FLAGS_STREAM_RESERVED),
 };
 
 static bool is_valid_mdb_source(struct nlattr *attr, __be16 proto,
@@ -739,14 +742,13 @@ out:
 static int br_mdb_replace_group_sg(const struct br_mdb_config *cfg,
 				   struct net_bridge_mdb_entry *mp,
 				   struct net_bridge_port_group *pg,
-				   struct net_bridge_mcast *brmctx,
-				   unsigned char flags)
+				   struct net_bridge_mcast *brmctx)
 {
 	unsigned long now = jiffies;
 
-	pg->flags = flags;
+	pg->flags = cfg->pg_flags;
 	pg->rt_protocol = cfg->rt_protocol;
-	if (!(flags & MDB_PG_FLAGS_PERMANENT) && !cfg->src_entry)
+	if (!(cfg->pg_flags & MDB_PG_FLAGS_PERMANENT) && !cfg->src_entry)
 		mod_timer(&pg->timer,
 			  now + brmctx->multicast_membership_interval);
 	else
@@ -760,7 +762,6 @@ static int br_mdb_replace_group_sg(const struct br_mdb_config *cfg,
 static int br_mdb_add_group_sg(const struct br_mdb_config *cfg,
 			       struct net_bridge_mdb_entry *mp,
 			       struct net_bridge_mcast *brmctx,
-			       unsigned char flags,
 			       struct netlink_ext_ack *extack)
 {
 	struct net_bridge_port_group __rcu **pp;
@@ -775,20 +776,19 @@ static int br_mdb_add_group_sg(const struct br_mdb_config *cfg,
 				NL_SET_ERR_MSG_MOD(extack, "(S, G) group is already joined by port");
 				return -EEXIST;
 			}
-			return br_mdb_replace_group_sg(cfg, mp, p, brmctx,
-						       flags);
+			return br_mdb_replace_group_sg(cfg, mp, p, brmctx);
 		}
 		if ((unsigned long)p->key.port < (unsigned long)cfg->p)
 			break;
 	}
 
-	p = br_multicast_new_port_group(cfg->p, &cfg->group, *pp, flags, NULL,
-					MCAST_INCLUDE, cfg->rt_protocol, extack);
+	p = br_multicast_new_port_group(cfg->p, &cfg->group, *pp, cfg->pg_flags,
+					NULL, MCAST_INCLUDE, cfg->rt_protocol, extack);
 	if (unlikely(!p))
 		return -ENOMEM;
 
 	rcu_assign_pointer(*pp, p);
-	if (!(flags & MDB_PG_FLAGS_PERMANENT) && !cfg->src_entry)
+	if (!(cfg->pg_flags & MDB_PG_FLAGS_PERMANENT) && !cfg->src_entry)
 		mod_timer(&p->timer,
 			  now + brmctx->multicast_membership_interval);
 	br_mdb_notify(cfg->br->dev, mp, p, RTM_NEWMDB);
@@ -818,7 +818,6 @@ static int br_mdb_add_group_src_fwd(const struct br_mdb_config *cfg,
 	struct net_bridge_mdb_entry *sgmp;
 	struct br_mdb_config sg_cfg;
 	struct br_ip sg_ip;
-	u8 flags = 0;
 
 	sg_ip = cfg->group;
 	sg_ip.src = src_ip->src;
@@ -828,12 +827,8 @@ static int br_mdb_add_group_src_fwd(const struct br_mdb_config *cfg,
 		return PTR_ERR(sgmp);
 	}
 
-	if (cfg->entry->state == MDB_PERMANENT)
-		flags |= MDB_PG_FLAGS_PERMANENT;
-	if (cfg->filter_mode == MCAST_EXCLUDE)
-		flags |= MDB_PG_FLAGS_BLOCKED;
-
 	memset(&sg_cfg, 0, sizeof(sg_cfg));
+
 	sg_cfg.br = cfg->br;
 	sg_cfg.p = cfg->p;
 	sg_cfg.entry = cfg->entry;
@@ -842,7 +837,11 @@ static int br_mdb_add_group_src_fwd(const struct br_mdb_config *cfg,
 	sg_cfg.filter_mode = MCAST_INCLUDE;
 	sg_cfg.rt_protocol = cfg->rt_protocol;
 	sg_cfg.nlflags = cfg->nlflags;
-	return br_mdb_add_group_sg(&sg_cfg, sgmp, brmctx, flags, extack);
+	sg_cfg.pg_flags = cfg->pg_flags;
+	if (cfg->filter_mode == MCAST_EXCLUDE)
+		sg_cfg.pg_flags |= MDB_PG_FLAGS_BLOCKED;
+
+	return br_mdb_add_group_sg(&sg_cfg, sgmp, brmctx, extack);
 }
 
 static int br_mdb_add_group_src(const struct br_mdb_config *cfg,
@@ -953,7 +952,6 @@ static int br_mdb_replace_group_star_g(const struct br_mdb_config *cfg,
 				       struct net_bridge_mdb_entry *mp,
 				       struct net_bridge_port_group *pg,
 				       struct net_bridge_mcast *brmctx,
-				       unsigned char flags,
 				       struct netlink_ext_ack *extack)
 {
 	unsigned long now = jiffies;
@@ -963,10 +961,10 @@ static int br_mdb_replace_group_star_g(const struct br_mdb_config *cfg,
 	if (err)
 		return err;
 
-	pg->flags = flags;
+	pg->flags = cfg->pg_flags;
 	pg->filter_mode = cfg->filter_mode;
 	pg->rt_protocol = cfg->rt_protocol;
-	if (!(flags & MDB_PG_FLAGS_PERMANENT) &&
+	if (!(cfg->pg_flags & MDB_PG_FLAGS_PERMANENT) &&
 	    cfg->filter_mode == MCAST_EXCLUDE)
 		mod_timer(&pg->timer,
 			  now + brmctx->multicast_membership_interval);
@@ -984,7 +982,6 @@ static int br_mdb_replace_group_star_g(const struct br_mdb_config *cfg,
 static int br_mdb_add_group_star_g(const struct br_mdb_config *cfg,
 				   struct net_bridge_mdb_entry *mp,
 				   struct net_bridge_mcast *brmctx,
-				   unsigned char flags,
 				   struct netlink_ext_ack *extack)
 {
 	struct net_bridge_port_group __rcu **pp;
@@ -1000,15 +997,14 @@ static int br_mdb_add_group_star_g(const struct br_mdb_config *cfg,
 				NL_SET_ERR_MSG_MOD(extack, "(*, G) group is already joined by port");
 				return -EEXIST;
 			}
-			return br_mdb_replace_group_star_g(cfg, mp, p, brmctx,
-							   flags, extack);
+			return br_mdb_replace_group_star_g(cfg, mp, p, brmctx, extack);
 		}
 		if ((unsigned long)p->key.port < (unsigned long)cfg->p)
 			break;
 	}
 
-	p = br_multicast_new_port_group(cfg->p, &cfg->group, *pp, flags, NULL,
-					cfg->filter_mode, cfg->rt_protocol,
+	p = br_multicast_new_port_group(cfg->p, &cfg->group, *pp, cfg->pg_flags,
+					NULL, cfg->filter_mode, cfg->rt_protocol,
 					extack);
 	if (unlikely(!p))
 		return -ENOMEM;
@@ -1018,7 +1014,7 @@ static int br_mdb_add_group_star_g(const struct br_mdb_config *cfg,
 		goto err_del_port_group;
 
 	rcu_assign_pointer(*pp, p);
-	if (!(flags & MDB_PG_FLAGS_PERMANENT) &&
+	if (!(cfg->pg_flags & MDB_PG_FLAGS_PERMANENT) &&
 	    cfg->filter_mode == MCAST_EXCLUDE)
 		mod_timer(&p->timer,
 			  now + brmctx->multicast_membership_interval);
@@ -1046,7 +1042,6 @@ static int br_mdb_add_group(const struct br_mdb_config *cfg,
 	struct net_bridge *br = cfg->br;
 	struct net_bridge_mcast *brmctx;
 	struct br_ip group = cfg->group;
-	unsigned char flags = 0;
 
 	brmctx = __br_mdb_choose_context(br, entry, extack);
 	if (!brmctx)
@@ -1069,13 +1064,10 @@ static int br_mdb_add_group(const struct br_mdb_config *cfg,
 		return 0;
 	}
 
-	if (entry->state == MDB_PERMANENT)
-		flags |= MDB_PG_FLAGS_PERMANENT;
-
 	if (br_multicast_is_star_g(&group))
-		return br_mdb_add_group_star_g(cfg, mp, brmctx, flags, extack);
+		return br_mdb_add_group_star_g(cfg, mp, brmctx, extack);
 	else
-		return br_mdb_add_group_sg(cfg, mp, brmctx, flags, extack);
+		return br_mdb_add_group_sg(cfg, mp, brmctx, extack);
 }
 
 static int __br_mdb_add(const struct br_mdb_config *cfg,
@@ -1225,6 +1217,15 @@ static int br_mdb_config_attrs_init(struct nlattr *set_attrs,
 		cfg->rt_protocol = nla_get_u8(mdb_attrs[MDBE_ATTR_RTPROT]);
 	}
 
+	if (mdb_attrs[MDBE_ATTR_FLAGS]) {
+		if (!cfg->p) {
+			NL_SET_ERR_MSG_MOD(extack, "Flags cannot be set for host groups");
+			return -EINVAL;
+		}
+		if (nla_get_u32(mdb_attrs[MDBE_ATTR_FLAGS]) & MDB_FLAGS_STREAM_RESERVED)
+			cfg->pg_flags |= MDB_PG_FLAGS_STREAM_RESERVED;
+	}
+
 	return 0;
 }
 
@@ -1279,6 +1280,9 @@ static int br_mdb_config_init(struct br_mdb_config *cfg, struct net_device *dev,
 		NL_SET_ERR_MSG_MOD(extack, "IPv4 entry group address 0.0.0.0 is not allowed");
 		return -EINVAL;
 	}
+
+	if (cfg->entry->state == MDB_PERMANENT)
+		cfg->pg_flags |= MDB_PG_FLAGS_PERMANENT;
 
 	if (tb[MDBA_SET_ENTRY_ATTRS])
 		return br_mdb_config_attrs_init(tb[MDBA_SET_ENTRY_ATTRS], cfg,
