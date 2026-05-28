@@ -7178,6 +7178,12 @@ static int mv88e6xxx_qos_port_mqprio(struct dsa_switch *ds, int port,
 	else
 		chip->avb_tc_policy.port_mask &= ~BIT(port);
 
+	err = mv88e6xxx_avb_set_port_avb_mode(chip, port, num_tc > 0);
+	if (err) {
+		NL_SET_ERR_MSG_FMT(extack, "failed to set port AVB mode: %d", err);
+		goto err_reset_tc;
+	}
+
 	mutex_unlock(&chip->reg_lock);
 
 	return 0;
@@ -7200,27 +7206,16 @@ static int mv88e6xxx_qos_port_cbs_set(struct dsa_switch *ds, int port,
 		return -EINVAL;
 
 	if (cbs_qopt->queue >= chip->info->num_tx_queues) {
-		dev_err(ds->dev, "p%d: invalid AVB queue %d\n", port, cbs_qopt->queue);
+		dev_err(ds->dev, "p%d: invalid CBS queue %d\n", port, cbs_qopt->queue);
 		return -EINVAL;
 	}
 
 	mutex_lock(&chip->reg_lock);
-
-	if (cbs_qopt->enable &&
-	    !(chip->avb_tc_policy.port_mask & BIT(port))) {
-		err = -EOPNOTSUPP;
-		goto out;
-	}
-
 	err = mv88e6xxx_qav_set_port_cbs_qopt(chip, port, cbs_qopt);
-	if (!err)
-		err = mv88e6xxx_avb_set_port_avb_mode(chip, port, cbs_qopt->enable);
-
-out:
 	mutex_unlock(&chip->reg_lock);
 
 	if (err) {
-		dev_info(ds->dev, "p%d: failed to %s AVB CBS policy: %d\n",
+		dev_info(ds->dev, "p%d: failed to %s CBS policy: %d\n",
 			 port, cbs_qopt->enable ? "enable" : "disable", err);
 	}
 

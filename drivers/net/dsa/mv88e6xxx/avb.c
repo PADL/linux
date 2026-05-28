@@ -261,20 +261,8 @@ static u16 mv88e6xxx_avb_get_cfg_avb_mode(struct mv88e6xxx_chip *chip)
 int mv88e6xxx_avb_set_port_avb_mode(struct mv88e6xxx_chip *chip,
 				    int port, bool enable)
 {
-	u16 cfg;
-
-	/* When disabling, only revert to legacy mode if no CBS queue
-	 * is still active on this port.
-	 */
-	if (!enable && mv88e6xxx_avb_port_has_cbs(chip, port)) {
-		dev_info(chip->dev, "p%d: CBS active, not disabling AVB\n", port);
-		return 0;
-	}
-
-	if (enable)
-		cfg = mv88e6xxx_avb_get_cfg_avb_mode(chip);
-	else
-		cfg = MV88E6XXX_PORT_AVB_CFG_AVB_MODE_LEGACY;
+	u16 cfg = enable ? mv88e6xxx_avb_get_cfg_avb_mode(chip)
+			 : MV88E6XXX_PORT_AVB_CFG_AVB_MODE_LEGACY;
 
 	return mv88e6xxx_port_avb_write(chip, port, MV88E6XXX_PORT_AVB_CFG, cfg);
 }
