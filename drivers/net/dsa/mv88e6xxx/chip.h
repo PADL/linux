@@ -8,6 +8,7 @@
 #ifndef _MV88E6XXX_CHIP_H
 #define _MV88E6XXX_CHIP_H
 
+#include <linux/dcbnl.h> /* for IEEE_8021Q_MAX_PRIORITIES */
 #include <linux/idr.h>
 #include <linux/if_vlan.h>
 #include <linux/irq.h>
@@ -19,6 +20,7 @@
 #include <linux/ptp_clock_kernel.h>
 #include <linux/timecounter.h>
 #include <net/dsa.h>
+#include <net/pkt_sched.h>
 
 #define EDSA_HLEN		8
 #define MV88E6XXX_N_FID		4096
@@ -252,6 +254,30 @@ struct mv88e6xxx_port_hwtstamp {
 	struct kernel_hwtstamp_config tstamp_config;
 };
 
+/**
+ * enum mv88e6xxx_avb_tc - Traffic class values for AVB mode
+ * @MV88E6XXX_AVB_TC_LEGACY: Non-AVB traffic
+ * @MV88E6XXX_AVB_TC_LO:     Low priority AVB (Class B)
+ * @MV88E6XXX_AVB_TC_HI:     High priority AVB (Class A)
+ */
+enum mv88e6xxx_avb_tc {
+	MV88E6XXX_AVB_TC_LEGACY = 0,
+	MV88E6XXX_AVB_TC_LO = 1,
+	MV88E6XXX_AVB_TC_HI = 2,
+	MV88E6XXX_AVB_TC_MAX = MV88E6XXX_AVB_TC_HI,
+};
+
+struct mv88e6xxx_tc_policy {
+	/* AVB MQPRIO offload active on the switch */
+	bool enabled;
+
+	/* Ports with MQPRIO TC installed */
+	u16 tc_port_mask;
+
+	/* Switch-wide AVB FPri/QPri register value */
+	u16 avb_pri_map;
+};
+
 enum mv88e6xxx_policy_mapping {
 	MV88E6XXX_POLICY_MAPPING_DA,
 	MV88E6XXX_POLICY_MAPPING_SA,
@@ -462,6 +488,9 @@ struct mv88e6xxx_chip {
 
 	/* TCAM entries */
 	struct mv88e6xxx_tcam tcam;
+
+	/* Global MQPRIO traffic class configuration */
+	struct mv88e6xxx_tc_policy tc_policy;
 
 	/* Global2 scratch register config data3 */
 	u8 g2_scratch_config3;
@@ -777,6 +806,20 @@ struct mv88e6xxx_avb_ops {
 	/* Access port-scoped 802.1Qav registers */
 	int (*port_qav_write)(struct mv88e6xxx_chip *chip, int port, int addr,
 			      u16 data);
+
+	/* Access global Class Shaping and Pacing registers */
+	int (*qav_read)(struct mv88e6xxx_chip *chip, int addr, u16 *data,
+			int len);
+	int (*qav_write)(struct mv88e6xxx_chip *chip, int addr, u16 data);
+
+	/* Access port-scoped Audio Video Bridging registers */
+	int (*port_avb_read)(struct mv88e6xxx_chip *chip, int port, int addr,
+			     u16 *data, int len);
+	int (*port_avb_write)(struct mv88e6xxx_chip *chip, int port, int addr,
+			      u16 data);
+
+	/* Access global Audio Video Bridging registers */
+	int (*avb_write)(struct mv88e6xxx_chip *chip, int addr, u16 data);
 };
 
 struct mv88e6xxx_ptp_ops {
@@ -817,6 +860,8 @@ struct mv88e6xxx_qav_info {
 	u16 rate_mask; /* QPri Rate valid bits mask */
 	u16 hilimit_mask; /* QPri HiLimit bits mask*/
 	u8 queue_mask; /* supported queues bitmask */
+	u8 avb_queue_mask[MV88E6XXX_AVB_TC_MAX + 1]; /* AVB supported queues bitmask */
+	u16 avb_pri_map; /* default AVB FPri to QPri map */
 };
 
 static inline bool mv88e6xxx_has_stu(struct mv88e6xxx_chip *chip)
