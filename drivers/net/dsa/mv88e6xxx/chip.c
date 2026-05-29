@@ -6781,21 +6781,107 @@ unwind:
 	return err;
 }
 
+static bool mv88e6xxx_atu_mc_entry_changed(const struct mv88e6xxx_atu_entry *existing,
+					   int port,
+					   const struct switchdev_obj_port_mdb *mdb,
+					   u8 state)
+{
+	if (!ether_addr_equal(existing->mac, mdb->addr))
+		return false;
+
+	if (existing->state != MV88E6XXX_G1_ATU_DATA_STATE_MC_STATIC &&
+	    existing->state != MV88E6XXX_G1_ATU_DATA_STATE_MC_STATIC_AVB_NRL)
+		return false;
+
+	if (existing->state == state)
+		return false;
+
+	if (!(existing->portvec & ~BIT(port)))
+		return false;
+
+	return true;
+}
+
+static bool mv88e6xxx_atu_mc_entry_reserved(const struct mv88e6xxx_atu_entry *existing,
+					    int port,
+					    const struct switchdev_obj_port_mdb *mdb)
+{
+	return ether_addr_equal(existing->mac, mdb->addr) &&
+	       existing->state == MV88E6XXX_G1_ATU_DATA_STATE_MC_STATIC_AVB_NRL &&
+	       (existing->portvec & BIT(port));
+}
+
+static int mv88e6xxx_avb_mc_entry_added(struct mv88e6xxx_chip *chip)
+{
+	if (refcount_inc_not_zero(&chip->tc_policy.avb_mdb_count))
+		return 0;
+
+	refcount_set(&chip->tc_policy.avb_mdb_count, 1);
+
+	if (chip->tc_policy.tc_mode == MV88E6XXX_TC_MODE_AVB)
+		return mv88e6xxx_avb_set_mode(chip, MV88E6XXX_AVB_MODE_ENHANCED);
+
+	return 0;
+}
+
+static int mv88e6xxx_avb_mc_entry_deleted(struct mv88e6xxx_chip *chip)
+{
+	if (refcount_dec_and_test(&chip->tc_policy.avb_mdb_count) &&
+	    chip->tc_policy.tc_mode == MV88E6XXX_TC_MODE_AVB)
+		return mv88e6xxx_avb_set_mode(chip, MV88E6XXX_AVB_MODE_STANDARD);
+
+	return 0;
+}
+
 static int mv88e6xxx_port_mdb_add(struct dsa_switch *ds, int port,
 				  const struct switchdev_obj_port_mdb *mdb,
 				  struct dsa_db db)
 {
 	struct mv88e6xxx_chip *chip = ds->priv;
+	struct mv88e6xxx_atu_entry existing;
+	u8 state;
+	u16 fid;
 	int err;
 
 	mv88e6xxx_reg_lock(chip);
-	err = mv88e6xxx_port_db_load_purge(chip, port, mdb->addr, mdb->vid,
-					   MV88E6XXX_G1_ATU_DATA_STATE_MC_STATIC);
+
+	/* Note that AVB_NRL entries persist independently of the MQPRIO mode;
+	 * as ingress rate control is not used by this driver, this is safe.
+	 */
+	if ((mdb->flags & SWITCHDEV_MDB_F_STREAM_RESERVED) && chip->info->qav)
+		state = MV88E6XXX_G1_ATU_DATA_STATE_MC_STATIC_AVB_NRL;
+	else
+		state = MV88E6XXX_G1_ATU_DATA_STATE_MC_STATIC;
+
+	err = mv88e6xxx_port_db_get(chip, mdb->addr, mdb->vid, &fid, &existing);
 	if (err)
 		goto out;
 
-	if (!mv88e6xxx_port_db_find(chip, mdb->addr, mdb->vid))
+	if (mv88e6xxx_atu_mc_entry_changed(&existing, port, mdb, state)) {
+		dev_info_ratelimited(chip->dev,
+				     "p%d: MDB %pM stream-reserved flag does not match existing entry\n",
+				     port, mdb->addr);
+		err = -EINVAL;
+		goto out;
+	}
+
+	err = mv88e6xxx_port_db_load_purge(chip, port, mdb->addr, mdb->vid, state);
+	if (err)
+		goto out;
+
+	if (!mv88e6xxx_port_db_find(chip, mdb->addr, mdb->vid)) {
 		err = -ENOSPC;
+		goto out;
+	}
+
+	if (mv88e6xxx_atu_mc_entry_reserved(&existing, port, mdb)) {
+		if (state != MV88E6XXX_G1_ATU_DATA_STATE_MC_STATIC_AVB_NRL)
+			err = mv88e6xxx_avb_mc_entry_deleted(chip);
+	} else if (state == MV88E6XXX_G1_ATU_DATA_STATE_MC_STATIC_AVB_NRL) {
+		err = mv88e6xxx_avb_mc_entry_added(chip);
+	}
+	if (err)
+		goto out;
 
 out:
 	mv88e6xxx_reg_unlock(chip);
@@ -6808,10 +6894,24 @@ static int mv88e6xxx_port_mdb_del(struct dsa_switch *ds, int port,
 				  struct dsa_db db)
 {
 	struct mv88e6xxx_chip *chip = ds->priv;
+	struct mv88e6xxx_atu_entry existing;
+	u16 fid;
 	int err;
 
 	mv88e6xxx_reg_lock(chip);
+
+	err = mv88e6xxx_port_db_get(chip, mdb->addr, mdb->vid, &fid, &existing);
+	if (err)
+		goto out;
+
 	err = mv88e6xxx_port_db_load_purge(chip, port, mdb->addr, mdb->vid, 0);
+	if (err)
+		goto out;
+
+	if (mv88e6xxx_atu_mc_entry_reserved(&existing, port, mdb))
+		err = mv88e6xxx_avb_mc_entry_deleted(chip);
+
+out:
 	mv88e6xxx_reg_unlock(chip);
 
 	return err;
