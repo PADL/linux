@@ -1651,6 +1651,24 @@ int mv88e6390_port_tag_remap(struct mv88e6xxx_chip *chip, int port)
 	return 0;
 }
 
+int mv88e6390_port_ieee_pri_map(struct mv88e6xxx_chip *chip, int port, const u8 *map)
+{
+	u8 fpri, qpri;
+	int err;
+
+	for (fpri = 0; fpri < IEEE_8021Q_MAX_PRIORITIES; fpri++) {
+		qpri = map ? (map[fpri] & 0x7) : fpri;
+
+		err = mv88e6xxx_port_ieeepmt_write(chip, port,
+						   MV88E6390_PORT_IEEE_PRIO_MAP_TABLE_INGRESS_PCP,
+						   fpri, (fpri | qpri << 4));
+		if (err)
+			return err;
+	}
+
+	return 0;
+}
+
 /* Offset 0x0E: Policy Control Register */
 
 static int
