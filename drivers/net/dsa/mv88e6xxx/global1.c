@@ -356,16 +356,32 @@ int mv88e6085_g1_ip_pri_map(struct mv88e6xxx_chip *chip)
 
 /* Offset 0x18: IEEE-PRI Register */
 
-int mv88e6085_g1_ieee_pri_map(struct mv88e6xxx_chip *chip)
+static int mv88e6xxx_g1_set_ieee_pri_map(struct mv88e6xxx_chip *chip,
+					 const u8 *map)
 {
-	/* Reset the IEEE Tag priorities to defaults */
-	return mv88e6xxx_g1_write(chip, MV88E6XXX_G1_IEEE_PRI, 0xfa41);
+	u16 val = 0;
+	u8 fpri;
+
+	for (fpri = 0; fpri <= 7; fpri++)
+		val |= (map[fpri] & 0x3) << (2 * fpri);
+
+	return mv88e6xxx_g1_write(chip, MV88E6XXX_G1_IEEE_PRI, val);
 }
 
-int mv88e6250_g1_ieee_pri_map(struct mv88e6xxx_chip *chip)
+static const u8 mv88e6085_default_ieee_pri_map[8] = { 1, 0, 0, 1, 2, 2, 3, 3 };
+
+int mv88e6085_g1_ieee_pri_map(struct mv88e6xxx_chip *chip, const u8 *map)
 {
-	/* Reset the IEEE Tag priorities to defaults */
-	return mv88e6xxx_g1_write(chip, MV88E6XXX_G1_IEEE_PRI, 0xfa50);
+	return mv88e6xxx_g1_set_ieee_pri_map(chip,
+					     map ? map : mv88e6085_default_ieee_pri_map);
+}
+
+static const u8 mv88e6250_default_ieee_pri_map[8] = { 0, 0, 1, 1, 2, 2, 3, 3 };
+
+int mv88e6250_g1_ieee_pri_map(struct mv88e6xxx_chip *chip, const u8 *map)
+{
+	return mv88e6xxx_g1_set_ieee_pri_map(chip,
+					     map ? map : mv88e6250_default_ieee_pri_map);
 }
 
 /* Offset 0x1a: Monitor Control */

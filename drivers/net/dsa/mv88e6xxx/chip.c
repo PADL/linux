@@ -34,6 +34,7 @@
 #include <net/dsa.h>
 #include <net/pkt_sched.h>
 
+#include "avb.h"
 #include "chip.h"
 #include "devlink.h"
 #include "global1.h"
@@ -1615,7 +1616,7 @@ static int mv88e6xxx_pri_setup(struct mv88e6xxx_chip *chip)
 	int err;
 
 	if (chip->info->ops->ieee_pri_map) {
-		err = chip->info->ops->ieee_pri_map(chip);
+		err = chip->info->ops->ieee_pri_map(chip, NULL);
 		if (err)
 			return err;
 	}
@@ -5531,6 +5532,7 @@ static const struct mv88e6xxx_ops mv88e6390_ops = {
 	.port_set_cmode = mv88e6390_port_set_cmode,
 	.port_setup_message_port = mv88e6xxx_setup_message_port,
 	.port_set_scheduling_mode = mv88e6390_port_set_scheduling_mode,
+	.port_ieee_pri_map = mv88e6390_port_ieee_pri_map,
 	.stats_snapshot = mv88e6390_g1_stats_snapshot,
 	.stats_set_histogram = mv88e6390_g1_stats_set_histogram,
 	.stats_get_sset_count = mv88e6320_stats_get_sset_count,
@@ -5596,6 +5598,7 @@ static const struct mv88e6xxx_ops mv88e6390x_ops = {
 	.port_set_cmode = mv88e6390x_port_set_cmode,
 	.port_setup_message_port = mv88e6xxx_setup_message_port,
 	.port_set_scheduling_mode = mv88e6390_port_set_scheduling_mode,
+	.port_ieee_pri_map = mv88e6390_port_ieee_pri_map,
 	.stats_snapshot = mv88e6390_g1_stats_snapshot,
 	.stats_set_histogram = mv88e6390_g1_stats_set_histogram,
 	.stats_get_sset_count = mv88e6320_stats_get_sset_count,
@@ -5653,6 +5656,7 @@ static const struct mv88e6xxx_ops mv88e6393x_ops = {
 	.port_set_jumbo_size = mv88e6165_port_set_jumbo_size,
 	.port_egress_rate_limiting = mv88e6097_port_egress_rate_limiting,
 	.port_set_scheduling_mode = mv88e6390_port_set_scheduling_mode,
+	.port_ieee_pri_map = mv88e6390_port_ieee_pri_map,
 	.port_pause_limit = mv88e6390_port_pause_limit,
 	.port_disable_learn_limit = mv88e6xxx_port_disable_learn_limit,
 	.port_disable_pri_override = mv88e6xxx_port_disable_pri_override,
@@ -5700,6 +5704,10 @@ static const struct mv88e6xxx_qav_info mv88e6352_qav_info = {
 	.rate_mask = GENMASK(14, 0),
 	.hi_limit_mask = GENMASK(14, 0),
 	.queue_mask = GENMASK(3, 0),
+	/* legacy (all queues), lo (queue 1/2), hi (queue 2/3) */
+	.avb_queue_mask = { GENMASK(3, 0), GENMASK(2, 1), GENMASK(3, 2) },
+	/* HI FPri 5/QPri 3, LO FPri 4/QPri 2 */
+	.avb_pri_map = 0x5342,
 };
 
 static const struct mv88e6xxx_qav_info mv88e6341_qav_info = {
@@ -5707,6 +5715,10 @@ static const struct mv88e6xxx_qav_info mv88e6341_qav_info = {
 	.rate_mask = GENMASK(15, 0),
 	.hi_limit_mask = GENMASK(14, 0),
 	.queue_mask = GENMASK(3, 0),
+	/* legacy (all queues), lo (queue 1/2), hi (queue 2/3) */
+	.avb_queue_mask = { GENMASK(3, 0), GENMASK(2, 1), GENMASK(3, 2) },
+	/* HI FPri 5/QPri 3, LO FPri 4/QPri 2 */
+	.avb_pri_map = 0x5342,
 };
 
 static const struct mv88e6xxx_qav_info mv88e6390_qav_info = {
@@ -5714,6 +5726,10 @@ static const struct mv88e6xxx_qav_info mv88e6390_qav_info = {
 	.rate_mask = GENMASK(15, 0),
 	.hi_limit_mask = GENMASK(13, 0),
 	.queue_mask = GENMASK(7, 0),
+	/* AVB traffic allowed on all queues */
+	.avb_queue_mask = { GENMASK(7, 0), GENMASK(7, 0), GENMASK(7, 0) },
+	/* HI FPri 3/QPri 7, LO FPri 2/QPri 6  */
+	.avb_pri_map = 0x3726,
 };
 
 static const struct mv88e6xxx_info mv88e6xxx_table[] = {
@@ -7236,6 +7252,332 @@ static int mv88e6xxx_crosschip_lag_leave(struct dsa_switch *ds, int sw_index,
 	return err_sync ? : err_pvt;
 }
 
+static int mv88e6xxx_tc_query_caps(struct tc_query_caps_base *base)
+{
+	switch (base->type) {
+	case TC_SETUP_QDISC_MQPRIO: {
+		struct tc_mqprio_caps *caps = base->caps;
+
+		caps->validate_queue_counts = true;
+
+		return 0;
+	}
+	default:
+		return -EOPNOTSUPP;
+	}
+}
+
+static int mv88e6xxx_validate_tc_mqprio_avb(const struct mv88e6xxx_chip *chip,
+					    const struct tc_mqprio_qopt_offload *mqprio,
+					    u8 ieee_pri_map[IEEE_8021Q_MAX_PRIORITIES])
+{
+	const struct mv88e6xxx_qav_info *qav = chip->info->qav;
+	const struct tc_mqprio_qopt *qopt = &mqprio->qopt;
+	int tc0_qcount, tc0_base_qpri, tc0_fpri_per_qpri;
+	struct netlink_ext_ack *extack = mqprio->extack;
+	u8 ieee_pri_map_set = 0;
+	int tc, fpri;
+
+	if (mqprio->shaper != TC_MQPRIO_SHAPER_DCB) {
+		NL_SET_ERR_MSG(extack, "only DCB shaper is supported for AVB mode");
+		return -EOPNOTSUPP;
+	} else if (qopt->num_tc > MV88E6XXX_AVB_TC_MAX + 1) {
+		NL_SET_ERR_MSG_FMT(extack, "too many traffic classes for AVB mode: %d",
+				   qopt->num_tc);
+		return -EOPNOTSUPP;
+	}
+
+	/* Validate and map TCs to QPri */
+	for (tc = MV88E6XXX_AVB_TC_LEGACY; tc < qopt->num_tc; tc++) {
+		if (qopt->offset[tc] + qopt->count[tc] > chip->info->num_tx_queues) {
+			NL_SET_ERR_MSG_FMT(extack, "queue %d out of range",
+					   qopt->offset[tc] + qopt->count[tc] - 1);
+			return -EOPNOTSUPP;
+		}
+
+		if (tc == MV88E6XXX_AVB_TC_LEGACY) {
+			if (qopt->count[tc] == 0) {
+				NL_SET_ERR_MSG(extack, "TC0 must have at least one queue");
+				return -ERANGE;
+			}
+
+			tc0_base_qpri = qopt->offset[tc];
+			tc0_fpri_per_qpri = DIV_ROUND_UP(IEEE_8021Q_MAX_PRIORITIES - 2,
+							 qopt->count[tc]);
+		} else if (qopt->count[tc] != 1) {
+			NL_SET_ERR_MSG_FMT(extack, "only one queue supported for TC%d", tc);
+			return -EOPNOTSUPP;
+		} else if ((qav->avb_queue_mask[tc] & BIT(qopt->offset[tc])) == 0) {
+			NL_SET_ERR_MSG_FMT(extack, "queue %d not valid for TC%d",
+					   qopt->offset[tc], tc);
+			return -EOPNOTSUPP;
+		}
+	}
+
+	/* Validate and map FPri to QPri: AVB FPris are mapped to a single QPri,
+	 * with the remaining legacy (TC0) FPris being distributed amongst the
+	 * remaining QPris.
+	 */
+	for (fpri = 0, tc0_qcount = 0; fpri < IEEE_8021Q_MAX_PRIORITIES; fpri++) {
+		tc = qopt->prio_tc_map[fpri];
+
+		if (tc == MV88E6XXX_AVB_TC_LEGACY) {
+			ieee_pri_map[fpri] = tc0_base_qpri + (tc0_qcount++ / tc0_fpri_per_qpri);
+			continue;
+		}
+
+		if (ieee_pri_map_set & BIT(tc)) {
+			NL_SET_ERR_MSG_FMT(extack,
+					   "only one frame priority can be mapped to TC%d", tc);
+			return -EOPNOTSUPP;
+		}
+
+		ieee_pri_map_set |= BIT(tc);
+		ieee_pri_map[fpri] = qopt->offset[tc];
+	}
+
+	if (ieee_pri_map_set != GENMASK(MV88E6XXX_AVB_TC_HI, MV88E6XXX_AVB_TC_LO)) {
+		NL_SET_ERR_MSG(extack,
+			       "both TC1 and TC2 must have 802.1p priorities assigned");
+		return -EOPNOTSUPP;
+	}
+
+	return qopt->num_tc;
+}
+
+static int mv88e6xxx_validate_tc_mqprio_qpri(const struct mv88e6xxx_chip *chip,
+					     const struct tc_mqprio_qopt_offload *mqprio,
+					     u8 ieee_pri_map[IEEE_8021Q_MAX_PRIORITIES])
+{
+	const struct tc_mqprio_qopt *qopt = &mqprio->qopt;
+	struct netlink_ext_ack *extack = mqprio->extack;
+	int tc, qpri, fpri;
+
+	if (mqprio->flags & (TC_MQPRIO_F_MIN_RATE | TC_MQPRIO_F_MAX_RATE)) {
+		NL_SET_ERR_MSG(extack, "per-queue rate limiting is not supported");
+		return -EOPNOTSUPP;
+	}
+
+	for (tc = 0; tc < qopt->num_tc; tc++) {
+		if (qopt->offset[tc] + qopt->count[tc] > chip->info->num_tx_queues) {
+			NL_SET_ERR_MSG_FMT(extack, "queue %d out of range",
+					   qopt->offset[tc] + qopt->count[tc] - 1);
+			return -EOPNOTSUPP;
+		}
+	}
+
+	for (fpri = 0; fpri < IEEE_8021Q_MAX_PRIORITIES; fpri++) {
+		qpri = qopt->prio_tc_map[fpri];
+		ieee_pri_map[fpri] = qopt->offset[qpri];
+	}
+
+	return qopt->num_tc;
+}
+
+static inline enum mv88e6xxx_tc_mode
+mv88e6xxx_mqprio_get_tc_mode(const struct tc_mqprio_qopt_offload *mqprio)
+{
+	switch (mqprio->mode) {
+	case TC_MQPRIO_MODE_DCB:
+		return MV88E6XXX_TC_MODE_AVB;
+	case TC_MQPRIO_MODE_CHANNEL:
+		return MV88E6XXX_TC_MODE_QPRI;
+	default:
+		return 0;
+	}
+}
+
+static int mv88e6xxx_validate_tc_mqprio(const struct mv88e6xxx_chip *chip,
+					const struct tc_mqprio_qopt_offload *mqprio,
+					enum mv88e6xxx_tc_mode *tc_mode,
+					u8 ieee_pri_map[IEEE_8021Q_MAX_PRIORITIES])
+{
+	const struct tc_mqprio_qopt *qopt = &mqprio->qopt;
+	struct netlink_ext_ack *extack = mqprio->extack;
+	int err;
+
+	if (qopt->num_tc == 0) {
+		*tc_mode = chip->tc_policy.tc_mode;
+		return 0;
+	}
+
+	if (qopt->hw != TC_MQPRIO_HW_OFFLOAD_TCS) {
+		NL_SET_ERR_MSG(extack, "only full TC hardware offload is supported");
+		return -EOPNOTSUPP;
+	} else if (mqprio->preemptible_tcs) {
+		NL_SET_ERR_MSG(extack, "frame preemption is not supported");
+		return -EOPNOTSUPP;
+	}
+
+	*tc_mode = mv88e6xxx_mqprio_get_tc_mode(mqprio);
+
+	switch (*tc_mode) {
+	case MV88E6XXX_TC_MODE_AVB:
+		err = mv88e6xxx_validate_tc_mqprio_avb(chip, mqprio, ieee_pri_map);
+		break;
+	case MV88E6XXX_TC_MODE_QPRI:
+		err = mv88e6xxx_validate_tc_mqprio_qpri(chip, mqprio, ieee_pri_map);
+		break;
+	default:
+		err = -EOPNOTSUPP;
+		break;
+	}
+
+	return err;
+}
+
+static int mv88e6xxx_set_port_ieee_pri_map(struct mv88e6xxx_chip *chip,
+					   int port, const u8 *ieee_pri_map)
+{
+	if (!chip->info->ops->port_ieee_pri_map)
+		return -EOPNOTSUPP;
+
+	return chip->info->ops->port_ieee_pri_map(chip, port, ieee_pri_map);
+}
+
+static int mv88e6xxx_set_ieee_pri_map(struct mv88e6xxx_chip *chip,
+				      const u8 *ieee_pri_map)
+{
+	int port, err;
+
+	if (chip->info->ops->ieee_pri_map)
+		return chip->info->ops->ieee_pri_map(chip, ieee_pri_map);
+
+	if (!chip->info->ops->port_ieee_pri_map)
+		return -EOPNOTSUPP;
+
+	for (port = 0; port < mv88e6xxx_num_ports(chip); port++) {
+		if (!dsa_is_user_port(chip->ds, port))
+			continue;
+
+		err = chip->info->ops->port_ieee_pri_map(chip, port, ieee_pri_map);
+		if (err)
+			return err;
+	}
+
+	return 0;
+}
+
+static inline bool mv88e6xxx_tc_mode_map_equal(struct mv88e6xxx_chip *chip,
+					       enum mv88e6xxx_tc_mode tc_mode,
+					       const u8 ieee_pri_map[IEEE_8021Q_MAX_PRIORITIES])
+{
+	if (memcmp(ieee_pri_map, chip->tc_policy.ieee_pri_map,
+		   IEEE_8021Q_MAX_PRIORITIES))
+		return false;
+
+	if (chip->tc_policy.tc_mode != tc_mode)
+		return false;
+
+	return true;
+}
+
+static int mv88e6xxx_setup_tc_mqprio(struct dsa_switch *ds, int port,
+				     struct tc_mqprio_qopt_offload *mqprio)
+{
+	struct netlink_ext_ack *extack = mqprio->extack;
+	u8 ieee_pri_map[IEEE_8021Q_MAX_PRIORITIES];
+	struct mv88e6xxx_chip *chip = ds->priv;
+	enum mv88e6xxx_tc_mode tc_mode;
+	struct net_device *user;
+	int err, num_tc, tc;
+	bool can_update_pol;
+	bool per_port_pol;
+
+	if (!dsa_is_user_port(ds, port))
+		return -EINVAL;
+
+	num_tc = mv88e6xxx_validate_tc_mqprio(chip, mqprio, &tc_mode, ieee_pri_map);
+	if (num_tc < 0)
+		return num_tc;
+
+	user = dsa_to_port(ds, port)->user;
+
+	per_port_pol = (tc_mode == MV88E6XXX_TC_MODE_QPRI &&
+			chip->info->ops->port_ieee_pri_map);
+
+	mv88e6xxx_reg_lock(chip);
+
+	if (num_tc && chip->tc_policy.tc_mode &&
+	    chip->tc_policy.tc_mode != tc_mode) {
+		NL_SET_ERR_MSG(extack, "all switch ports must use the same MQPRIO mode");
+		err = -EOPNOTSUPP;
+		goto err_unlock;
+	}
+
+	can_update_pol = per_port_pol ||
+			 chip->tc_policy.port_mask == 0 ||
+			 (hweight16(chip->tc_policy.port_mask) == 1 &&
+			  ffs(chip->tc_policy.port_mask) == port + 1);
+	if (!can_update_pol && num_tc &&
+	    !mv88e6xxx_tc_mode_map_equal(chip, tc_mode, ieee_pri_map)) {
+		NL_SET_ERR_MSG(extack, "only a single priority mapping is supported per switch");
+		err = -EOPNOTSUPP;
+		goto err_unlock;
+	}
+
+	err = netdev_set_num_tc(user, num_tc);
+	if (err)
+		goto err_reset_tc;
+
+	for (tc = 0; tc < num_tc; tc++) {
+		const struct tc_mqprio_qopt *qopt = &mqprio->qopt;
+
+		err = netdev_set_tc_queue(user, tc, 1, qopt->offset[tc]);
+		if (err)
+			goto err_reset_tc;
+	}
+
+	if (can_update_pol) {
+		const u8 *map = num_tc ? ieee_pri_map : NULL;
+
+		if (per_port_pol)
+			err = mv88e6xxx_set_port_ieee_pri_map(chip, port, map);
+		else
+			err = mv88e6xxx_set_ieee_pri_map(chip, map);
+		if (err) {
+			NL_SET_ERR_MSG_FMT(extack, "p%d: failed to %s priority mapping",
+					   port, num_tc ? "enable" : "disable");
+			goto err_reset_tc;
+		}
+
+		if (tc_mode == MV88E6XXX_TC_MODE_AVB) {
+			err = num_tc ? mv88e6xxx_avb_enable(chip, mqprio)
+				     : mv88e6xxx_avb_disable(chip);
+			if (err) {
+				NL_SET_ERR_MSG_FMT(extack, "failed to %s AVB",
+						   num_tc ? "enable" : "disable");
+				goto err_reset_pri_map;
+			}
+		}
+	}
+
+	if (num_tc && can_update_pol && !per_port_pol)
+		memcpy(chip->tc_policy.ieee_pri_map, ieee_pri_map, sizeof(ieee_pri_map));
+
+	if (num_tc) {
+		chip->tc_policy.port_mask |= BIT(port);
+		chip->tc_policy.tc_mode = tc_mode;
+	} else {
+		chip->tc_policy.port_mask &= ~BIT(port);
+		if (!chip->tc_policy.port_mask)
+			chip->tc_policy.tc_mode = MV88E6XXX_TC_MODE_NONE;
+	}
+
+	mv88e6xxx_reg_unlock(chip);
+
+	return 0;
+
+err_reset_pri_map:
+	mv88e6xxx_set_ieee_pri_map(chip, NULL); /* only reachable from AVB/DCB mode */
+err_reset_tc:
+	netdev_reset_tc(user);
+err_unlock:
+	mv88e6xxx_reg_unlock(chip);
+
+	return err;
+}
+
 static int mv88e6xxx_setup_tc_cbs(struct dsa_switch *ds, int port,
 				  struct tc_cbs_qopt_offload *cbs)
 {
@@ -7324,6 +7666,10 @@ static int mv88e6xxx_port_setup_tc(struct dsa_switch *ds, int port,
 				   enum tc_setup_type type, void *type_data)
 {
 	switch (type) {
+	case TC_QUERY_CAPS:
+		return mv88e6xxx_tc_query_caps(type_data);
+	case TC_SETUP_QDISC_MQPRIO:
+		return mv88e6xxx_setup_tc_mqprio(ds, port, type_data);
 	case TC_SETUP_QDISC_CBS:
 		return mv88e6xxx_setup_tc_cbs(ds, port, type_data);
 	default:
