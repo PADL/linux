@@ -265,6 +265,31 @@ out:
 }
 
 #ifdef CONFIG_BRIDGE_IGMP_SNOOPING
+/* True if the bridge has an MQPRIO/TAPRIO Qdisc that maps the frame's VLAN PCP
+ * to a non-zero traffic class.
+ */
+static bool br_skb_is_sr_class(const struct net_bridge *br,
+			       const struct sk_buff *skb)
+{
+	if (!skb_vlan_tag_present(skb) || !netdev_get_num_tc(br->dev))
+		return false;
+
+	return netdev_get_prio_tc_map(br->dev, skb_vlan_tag_get_prio(skb)) != 0;
+}
+
+/* A port with at least one MDB_FLAGS_STREAM_RESERVED entry reserves its
+ * non-zero (SR-class) TCs for those DAs: drop an SR-class frame unless this
+ * membership (member_sr) is itself stream-reserved.
+ */
+static bool br_port_sr_drop(const struct net_bridge_port *p,
+			    bool member_sr, bool sr_class)
+{
+	if (!sr_class || !refcount_read(&p->sr_member_cnt))
+		return false;
+
+	return !member_sr;
+}
+
 static void maybe_deliver_addr(struct net_bridge_port *p, struct sk_buff *skb,
 			       const unsigned char *addr, bool local_orig)
 {
@@ -306,6 +331,7 @@ void br_multicast_flood(struct net_bridge_mdb_entry *mdst,
 	struct net_bridge_port_group *p;
 	bool allow_mode_include = true;
 	struct hlist_node *rp;
+	bool sr_class;
 
 	rp = br_multicast_get_first_rport_node(brmctx, skb);
 
@@ -319,6 +345,8 @@ void br_multicast_flood(struct net_bridge_mdb_entry *mdst,
 		br_tc_skb_miss_set(skb, true);
 	}
 
+	sr_class = br_skb_is_sr_class(brmctx->br, skb);
+
 	while (p || rp) {
 		struct net_bridge_port *port, *lport, *rport;
 
@@ -327,6 +355,11 @@ void br_multicast_flood(struct net_bridge_mdb_entry *mdst,
 
 		if ((unsigned long)lport > (unsigned long)rport) {
 			port = lport;
+
+			if (br_port_sr_drop(port,
+					    !!(p->flags & MDB_PG_FLAGS_STREAM_RESERVED),
+					    sr_class))
+				goto delivered;
 
 			if (port->flags & BR_MULTICAST_TO_UNICAST) {
 				maybe_deliver_addr(lport, skb, p->eth_addr,
@@ -339,6 +372,12 @@ void br_multicast_flood(struct net_bridge_mdb_entry *mdst,
 				goto delivered;
 		} else {
 			port = rport;
+
+			if (br_port_sr_drop(port,
+					    lport == rport &&
+					    (p->flags & MDB_PG_FLAGS_STREAM_RESERVED),
+					    sr_class))
+				goto delivered;
 		}
 
 		prev = maybe_deliver(prev, port, skb, local_orig);

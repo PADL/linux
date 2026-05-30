@@ -739,6 +739,18 @@ out:
 	return brmctx;
 }
 
+static void br_pg_assign_flags(struct net_bridge_port_group *pg,
+			       unsigned char flags)
+{
+	if ((pg->flags ^ flags) & MDB_PG_FLAGS_STREAM_RESERVED) {
+		if (flags & MDB_PG_FLAGS_STREAM_RESERVED)
+			br_port_sr_member_inc(pg->key.port);
+		else
+			br_port_sr_member_dec(pg->key.port);
+	}
+	pg->flags = flags;
+}
+
 static int br_mdb_replace_group_sg(const struct br_mdb_config *cfg,
 				   struct net_bridge_mdb_entry *mp,
 				   struct net_bridge_port_group *pg,
@@ -746,7 +758,7 @@ static int br_mdb_replace_group_sg(const struct br_mdb_config *cfg,
 {
 	unsigned long now = jiffies;
 
-	pg->flags = cfg->pg_flags;
+	br_pg_assign_flags(pg, cfg->pg_flags);
 	pg->rt_protocol = cfg->rt_protocol;
 	if (!(cfg->pg_flags & MDB_PG_FLAGS_PERMANENT) && !cfg->src_entry)
 		mod_timer(&pg->timer,
@@ -961,7 +973,7 @@ static int br_mdb_replace_group_star_g(const struct br_mdb_config *cfg,
 	if (err)
 		return err;
 
-	pg->flags = cfg->pg_flags;
+	br_pg_assign_flags(pg, cfg->pg_flags);
 	pg->filter_mode = cfg->filter_mode;
 	pg->rt_protocol = cfg->rt_protocol;
 	if (!(cfg->pg_flags & MDB_PG_FLAGS_PERMANENT) &&

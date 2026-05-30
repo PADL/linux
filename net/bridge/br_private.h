@@ -448,6 +448,8 @@ struct net_bridge_port {
 	u16				group_fwd_mask;
 	u16				backup_redirected_cnt;
 
+	refcount_t			sr_member_cnt;
+
 	struct bridge_stp_xstats	stp_xstats;
 };
 
@@ -455,6 +457,17 @@ struct net_bridge_port {
 
 #define br_auto_port(p) ((p)->flags & BR_AUTO_MASK)
 #define br_promisc_port(p) ((p)->flags & BR_PROMISC)
+
+static inline void br_port_sr_member_inc(struct net_bridge_port *port)
+{
+	if (!refcount_inc_not_zero(&port->sr_member_cnt))
+		refcount_set(&port->sr_member_cnt, 1);
+}
+
+static inline bool br_port_sr_member_dec(struct net_bridge_port *port)
+{
+	return refcount_dec_and_test(&port->sr_member_cnt);
+}
 
 static inline struct net_bridge_port *br_port_get_rcu(const struct net_device *dev)
 {

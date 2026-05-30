@@ -821,6 +821,8 @@ void br_multicast_del_pg(struct net_bridge_mdb_entry *mp,
 		br_multicast_star_g_handle_mode(pg, MCAST_INCLUDE);
 	}
 	br_multicast_port_ngroups_dec(pg->key.port, pg->key.addr.vid);
+	if (pg->flags & MDB_PG_FLAGS_STREAM_RESERVED)
+		br_port_sr_member_dec(pg->key.port);
 	hlist_add_head(&pg->mcast_gc.gc_node, &br->mcast_gc_list);
 	queue_work(system_long_wq, &br->mcast_gc_work);
 
@@ -1420,7 +1422,6 @@ struct net_bridge_port_group *br_multicast_new_port_group(
 
 	p->key.addr = *group;
 	p->key.port = port;
-	p->flags = flags;
 	p->filter_mode = filter_mode;
 	p->rt_protocol = rt_protocol;
 	p->eht_host_tree = RB_ROOT;
@@ -1445,6 +1446,10 @@ struct net_bridge_port_group *br_multicast_new_port_group(
 	else
 		eth_broadcast_addr(p->eth_addr);
 
+	p->flags = flags;
+	if (flags & MDB_PG_FLAGS_STREAM_RESERVED)
+		br_port_sr_member_inc(port);
+
 	return p;
 
 free_out:
@@ -1463,6 +1468,8 @@ void br_multicast_del_port_group(struct net_bridge_port_group *p)
 	if (!br_multicast_is_star_g(&p->key.addr))
 		rhashtable_remove_fast(&port->br->sg_port_tbl, &p->rhnode,
 				       br_sg_port_rht_params);
+	if (p->flags & MDB_PG_FLAGS_STREAM_RESERVED)
+		br_port_sr_member_dec(port);
 	kfree(p);
 	br_multicast_port_ngroups_dec(port, vid);
 }
