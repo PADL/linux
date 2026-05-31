@@ -378,6 +378,8 @@ struct net_bridge_mdb_entry {
 	struct net_bridge_port_group __rcu *ports;
 	struct br_ip			addr;
 	bool				host_joined;
+	/* count of member port groups flagged for dynamic reservation */
+	int				dynamic_reservation;
 
 	struct timer_list		timer;
 	struct hlist_node		mdb_node;
@@ -385,6 +387,21 @@ struct net_bridge_mdb_entry {
 	struct net_bridge_mcast_gc	mcast_gc;
 	struct rcu_head			rcu;
 };
+
+/* Track mp->dynamic_reservation as a port group gains or loses the
+ * MDB_PG_FLAGS_DYNAMIC_RESERVATION flag. Caller holds multicast_lock.
+ */
+static inline void
+br_mdb_reservation_update(struct net_bridge_mdb_entry *mp,
+			  unsigned char old_flags, unsigned char new_flags)
+{
+	int adj;
+
+	if (!((old_flags ^ new_flags) & MDB_PG_FLAGS_DYNAMIC_RESERVATION))
+		return;
+	adj = (new_flags & MDB_PG_FLAGS_DYNAMIC_RESERVATION) ? 1 : -1;
+	WRITE_ONCE(mp->dynamic_reservation, mp->dynamic_reservation + adj);
+}
 
 struct net_bridge_port {
 	struct net_bridge		*br;
@@ -798,8 +815,34 @@ static inline void br_tc_skb_miss_set(struct sk_buff *skb, bool miss)
 		return;
 	ext->l2_miss = true;
 }
+
+static inline void br_tc_skb_dynamic_reservation_hit_set(struct sk_buff *skb,
+							 bool hit)
+{
+	struct tc_skb_ext *ext;
+
+	if (!tc_skb_ext_tc_enabled())
+		return;
+
+	ext = skb_ext_find(skb, TC_SKB_EXT);
+	if (ext) {
+		ext->dynamic_reservation_hit = hit;
+		return;
+	}
+	if (!hit)
+		return;
+	ext = tc_skb_ext_alloc(skb);
+	if (!ext)
+		return;
+	ext->dynamic_reservation_hit = true;
+}
 #else
 static inline void br_tc_skb_miss_set(struct sk_buff *skb, bool miss)
+{
+}
+
+static inline void br_tc_skb_dynamic_reservation_hit_set(struct sk_buff *skb,
+							 bool hit)
 {
 }
 #endif
