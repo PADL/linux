@@ -344,7 +344,7 @@ static int br_mdb_fill_info(struct sk_buff *skb, struct netlink_callback *cb,
 			break;
 		}
 
-		if (!s_pidx && mp->host_joined) {
+		if (!s_pidx && (mp->flags & BRIDGE_MDBE_F_HOST_JOINED)) {
 			err = __mdb_fill_info(skb, mp, NULL);
 			if (err) {
 				nla_nest_cancel(skb, nest2);
@@ -1053,7 +1053,8 @@ static int br_mdb_add_group(const struct br_mdb_config *cfg,
 
 	/* host join */
 	if (!port) {
-		if (mp->host_joined && !(cfg->nlflags & NLM_F_REPLACE)) {
+		if ((mp->flags & BRIDGE_MDBE_F_HOST_JOINED) &&
+		    !(cfg->nlflags & NLM_F_REPLACE)) {
 			NL_SET_ERR_MSG_MOD(extack, "Group is already joined by host");
 			return -EEXIST;
 		}
@@ -1381,7 +1382,8 @@ static int __br_mdb_del(const struct br_mdb_config *cfg)
 		goto unlock;
 
 	/* host leave */
-	if (entry->ifindex == mp->br->dev->ifindex && mp->host_joined) {
+	if (entry->ifindex == mp->br->dev->ifindex &&
+	    (mp->flags & BRIDGE_MDBE_F_HOST_JOINED)) {
 		br_multicast_host_leave(mp, false);
 		err = 0;
 		br_mdb_notify(br->dev, mp, NULL, RTM_DELMDB);
@@ -1619,7 +1621,7 @@ br_mdb_get_reply_alloc(const struct net_bridge_mdb_entry *mp)
 		     /* MDBA_MDB_ENTRY */
 		     nla_total_size(0);
 
-	if (mp->host_joined)
+	if (mp->flags & BRIDGE_MDBE_F_HOST_JOINED)
 		nlmsg_size += rtnl_mdb_nlmsg_pg_size(NULL);
 
 	for (pg = mlock_dereference(mp->ports, mp->br); pg;
@@ -1658,7 +1660,7 @@ static int br_mdb_get_reply_fill(struct sk_buff *skb,
 		goto cancel;
 	}
 
-	if (mp->host_joined) {
+	if (mp->flags & BRIDGE_MDBE_F_HOST_JOINED) {
 		err = __mdb_fill_info(skb, mp, NULL);
 		if (err)
 			goto cancel;
@@ -1702,7 +1704,7 @@ int br_mdb_get(struct net_device *dev, struct nlattr *tb[], u32 portid, u32 seq,
 	spin_lock_bh(&br->multicast_lock);
 
 	mp = br_mdb_ip_get(br, &group);
-	if (!mp || (!mp->ports && !mp->host_joined)) {
+	if (!mp || (!mp->ports && !(mp->flags & BRIDGE_MDBE_F_HOST_JOINED))) {
 		NL_SET_ERR_MSG_MOD(extack, "MDB entry not found");
 		err = -ENOENT;
 		goto unlock;

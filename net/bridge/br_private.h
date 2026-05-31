@@ -373,12 +373,14 @@ struct net_bridge_port_group {
 	struct rcu_head			rcu;
 };
 
+#define BRIDGE_MDBE_F_HOST_JOINED	BIT(0)
+
 struct net_bridge_mdb_entry {
 	struct rhash_head		rhnode;
 	struct net_bridge		*br;
 	struct net_bridge_port_group __rcu *ports;
 	struct br_ip			addr;
-	bool				host_joined;
+	u8				flags;
 
 	struct timer_list		timer;
 	struct hlist_node		mdb_node;
