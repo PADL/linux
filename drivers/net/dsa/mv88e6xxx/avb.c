@@ -94,6 +94,20 @@ u16 mv88e6xxx_avb_pri_map_to_reg(const struct tc_mqprio_qopt *qopt)
 	       MV88E6XXX_AVB_CFG_AVB_LO_QPRI_SET(lo_qpri);
 }
 
+static u16 mv88e6xxx_avb_pri_map_to_legacy_reg(const struct tc_mqprio_qopt *qopt)
+{
+	/* 802.1Q Table 6-5: non-AVB regenerated priority is zero;
+	 * if possible, use a lower QPri for non-AVB (legacy) traffic.
+	 */
+	u8 hi_qpri = qopt->offset[MV88E6XXX_AVB_TC_HI];
+	u8 lo_qpri = qopt->offset[MV88E6XXX_AVB_TC_LO];
+
+	return MV88E6XXX_AVB_CFG_AVB_HI_FPRI_SET(0) |
+	       MV88E6XXX_AVB_CFG_AVB_HI_QPRI_SET(hi_qpri ? hi_qpri - 1 : 0) |
+	       MV88E6XXX_AVB_CFG_AVB_LO_FPRI_SET(0) |
+	       MV88E6XXX_AVB_CFG_AVB_LO_QPRI_SET(lo_qpri ? lo_qpri - 1 : 0);
+}
+
 int mv88e6xxx_avb_enable(struct mv88e6xxx_chip *chip,
 			 struct tc_mqprio_qopt_offload *mqprio)
 {
@@ -108,13 +122,25 @@ int mv88e6xxx_avb_enable(struct mv88e6xxx_chip *chip,
 	if (err)
 		return err;
 
-	err = mv88e6xxx_avb_write(chip, MV88E6XXX_AVB_CFG_AVB,
-				  mv88e6xxx_avb_pri_map_to_reg(&mqprio->qopt));
+	/* interpret AVB_NRL bits in the ATU as dynamic reservations */
+	err = mv88e6xxx_g1_atu_set_mac_avb(chip, true);
 	if (err)
 		goto err_iso_ptr;
 
-	return 0;
+	err = mv88e6xxx_avb_write(chip, MV88E6XXX_AVB_CFG_AVB,
+				  mv88e6xxx_avb_pri_map_to_reg(&mqprio->qopt));
+	if (err)
+		goto err_mac_avb;
 
+	err = mv88e6xxx_avb_write(chip, MV88E6XXX_AVB_CFG_LEGACY,
+				  mv88e6xxx_avb_pri_map_to_legacy_reg(&mqprio->qopt));
+	if (err)
+		goto err_cfg_avb;
+
+err_cfg_avb:
+	mv88e6xxx_avb_write(chip, MV88E6XXX_AVB_CFG_AVB, qav->avb_pri_map);
+err_mac_avb:
+	mv88e6xxx_g1_atu_set_mac_avb(chip, false);
 err_iso_ptr:
 	mv88e6xxx_qav_set_iso_ptr(chip, 0);
 
@@ -130,6 +156,15 @@ int mv88e6xxx_avb_disable(struct mv88e6xxx_chip *chip)
 		return -EOPNOTSUPP;
 
 	err = mv88e6xxx_avb_write(chip, MV88E6XXX_AVB_CFG_AVB, qav->avb_pri_map);
+	if (err)
+		return err;
+
+	err = mv88e6xxx_avb_write(chip, MV88E6XXX_AVB_CFG_LEGACY,
+				  qav->avb_legacy_pri_map);
+	if (err)
+		return err;
+
+	err = mv88e6xxx_g1_atu_set_mac_avb(chip, false);
 	if (err)
 		return err;
 

@@ -903,6 +903,7 @@ struct mv88e6xxx_qav_info {
 	u8 queue_mask; /* supported queues bitmask */
 	u8 avb_queue_mask[MV88E6XXX_AVB_TC_MAX + 1]; /* AVB supported queues bitmask */
 	u16 avb_pri_map; /* default AVB FPri to QPri map */
+	u16 avb_legacy_pri_map; /* default legacy AVB FPri to QPri map */
 };
 
 static inline bool mv88e6xxx_has_stu(struct mv88e6xxx_chip *chip)
