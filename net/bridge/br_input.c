@@ -105,7 +105,7 @@ static bool br_sr_admission_denied(const struct net_bridge_port *p,
 	if (!mdst)
 		return true;
 
-	if (mdst->flags & BRIDGE_MDBE_F_HOST_STREAM_RESERVED)
+	if ((mdst->flags & BRIDGE_MDBE_F_HOST_MASK) == BRIDGE_MDBE_F_HOST_MASK)
 		return false;
 
 	for (pg = rcu_dereference(mdst->ports); pg;

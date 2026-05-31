@@ -397,10 +397,10 @@ static void br_multicast_sg_host_state(struct net_bridge_mdb_entry *star_mp,
 	sg_mp = br_mdb_ip_get(star_mp->br, &sg->key.addr);
 	if (!sg_mp)
 		return;
-	sg_mp->flags |= BRIDGE_MDBE_F_HOST_JOINED;
+	sg_mp->flags |= star_mp->flags & BRIDGE_MDBE_F_HOST_MASK;
 }
 
-/* set the host_joined state of all of *,G's S,G entries */
+/* set the host state of all of *,G's S,G entries */
 static void br_multicast_star_g_host_state(struct net_bridge_mdb_entry *star_mp)
 {
 	struct net_bridge *br = star_mp->br;
@@ -425,8 +425,8 @@ static void br_multicast_star_g_host_state(struct net_bridge_mdb_entry *star_mp)
 			sg_mp = br_mdb_ip_get(br, &sg_ip);
 			if (!sg_mp)
 				continue;
-			sg_mp->flags &= ~BRIDGE_MDBE_F_HOST_JOINED;
-			sg_mp->flags |= star_mp->flags & BRIDGE_MDBE_F_HOST_JOINED;
+			sg_mp->flags &= ~BRIDGE_MDBE_F_HOST_MASK;
+			sg_mp->flags |= star_mp->flags & BRIDGE_MDBE_F_HOST_MASK;
 		}
 	}
 }
@@ -454,7 +454,7 @@ static void br_multicast_sg_del_exclude_ports(struct net_bridge_mdb_entry *sgmp)
 	 * we treat it as EXCLUDE {}, so for an S,G it's considered a
 	 * STAR_EXCLUDE entry and we can safely leave it
 	 */
-	sgmp->flags &= ~BRIDGE_MDBE_F_HOST_JOINED;
+	sgmp->flags &= ~BRIDGE_MDBE_F_HOST_MASK;
 
 	for (pp = &sgmp->ports;
 	     (p = mlock_dereference(*pp, sgmp->br)) != NULL;) {
@@ -1470,10 +1470,18 @@ void br_multicast_del_port_group(struct net_bridge_port_group *p)
 }
 
 void br_multicast_host_join(const struct net_bridge_mcast *brmctx,
-			    struct net_bridge_mdb_entry *mp, bool notify)
+			    struct net_bridge_mdb_entry *mp,
+			    enum br_mcast_sr_op sr_op, bool notify)
 {
-	if (!(mp->flags & BRIDGE_MDBE_F_HOST_JOINED)) {
-		mp->flags |= BRIDGE_MDBE_F_HOST_JOINED;
+	u8 old_flags = mp->flags;
+
+	mp->flags |= BRIDGE_MDBE_F_HOST_JOINED;
+	if (sr_op == BR_MCAST_SR_SET)
+		mp->flags |= BRIDGE_MDBE_F_HOST_STREAM_RESERVED;
+	else if (sr_op == BR_MCAST_SR_CLEAR)
+		mp->flags &= ~BRIDGE_MDBE_F_HOST_STREAM_RESERVED;
+
+	if ((mp->flags ^ old_flags) & BRIDGE_MDBE_F_HOST_MASK) {
 		if (br_multicast_is_star_g(&mp->addr))
 			br_multicast_star_g_host_state(mp);
 		if (notify)
@@ -1483,6 +1491,14 @@ void br_multicast_host_join(const struct net_bridge_mcast *brmctx,
 	if (br_group_is_l2(&mp->addr))
 		return;
 
+	/* Host stream-reserved entries are permanent and have no timer; drop
+	 * any timer left from an earlier non-reserved host join.
+	 */
+	if (mp->flags & BRIDGE_MDBE_F_HOST_STREAM_RESERVED) {
+		timer_delete(&mp->timer);
+		return;
+	}
+
 	mod_timer(&mp->timer, jiffies + brmctx->multicast_membership_interval);
 }
 
@@ -1491,7 +1507,8 @@ void br_multicast_host_leave(struct net_bridge_mdb_entry *mp, bool notify)
 	if (!(mp->flags & BRIDGE_MDBE_F_HOST_JOINED))
 		return;
 
-	mp->flags &= ~BRIDGE_MDBE_F_HOST_JOINED;
+	mp->flags &= ~(BRIDGE_MDBE_F_HOST_JOINED |
+		       BRIDGE_MDBE_F_HOST_STREAM_RESERVED);
 	if (br_multicast_is_star_g(&mp->addr))
 		br_multicast_star_g_host_state(mp);
 	if (notify)
@@ -1520,7 +1537,7 @@ __br_multicast_add_group(struct net_bridge_mcast *brmctx,
 		return ERR_CAST(mp);
 
 	if (!pmctx) {
-		br_multicast_host_join(brmctx, mp, true);
+		br_multicast_host_join(brmctx, mp, BR_MCAST_SR_KEEP, true);
 		goto out;
 	}
 

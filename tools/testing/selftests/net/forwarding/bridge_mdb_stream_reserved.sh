@@ -30,6 +30,8 @@
 ALL_TESTS="
 	cfg_test
 	fwd_sr_member_test
+	fwd_sr_host_member_test
+	fwd_sr_host_persistence_test
 	fwd_foreign_blocked_test
 	fwd_unicast_blocked_test
 	fwd_flag_gates_test
@@ -217,11 +219,43 @@ cfg_test()
 	bridge mdb add dev br0 port $swp2 grp $GRP vid $VID \
 		stream_reserved 2>/dev/null
 	check_fail $? "non-permanent stream_reserved port entry accepted"
-
-	# The flag must be rejected on host groups.
-	bridge mdb add dev br0 port br0 grp $GRP permanent vid $VID \
+	bridge mdb add dev br0 port br0 grp $GRP vid $VID \
 		stream_reserved 2>/dev/null
-	check_fail $? "stream_reserved accepted on a host group"
+	check_fail $? "non-permanent stream_reserved host group accepted"
+
+	# A plain (non-SR) host join is still accepted, must not be permanent,
+	# and toggles cleanly with stream_reserved on replace.
+	bridge mdb add dev br0 port br0 grp $GRP vid $VID
+	check_err $? "plain host join rejected"
+	bridge mdb add dev br0 port br0 grp $GRP permanent vid $VID 2>/dev/null
+	check_fail $? "permanent flag accepted on a plain host group"
+	bridge -d mdb show dev br0 | grep "port br0" | grep "$GRP" | \
+		grep -q "stream_reserved"
+	check_fail $? "stream_reserved unexpectedly set on a plain host join"
+	bridge mdb replace dev br0 port br0 grp $GRP permanent vid $VID \
+		stream_reserved
+	check_err $? "Failed to replace plain host join with stream_reserved"
+	bridge mdb replace dev br0 port br0 grp $GRP vid $VID
+	check_err $? "Failed to replace stream_reserved host group with plain"
+	bridge -d mdb show dev br0 | grep "port br0" | grep "$GRP" | \
+		grep -q "stream_reserved"
+	check_fail $? "stream_reserved not cleared on host group replace"
+	bridge mdb del dev br0 port br0 grp $GRP vid $VID
+
+	# permanent + stream_reserved is accepted on host groups and the
+	# entry is dumped as both permanent and stream_reserved.
+	bridge mdb add dev br0 port br0 grp $GRP permanent vid $VID \
+		stream_reserved
+	check_err $? "stream_reserved rejected on a host group"
+	bridge -d mdb show dev br0 | grep "port br0" | grep "$GRP" | \
+		grep -q "stream_reserved"
+	check_err $? "stream_reserved flag not shown on host group"
+	bridge -d mdb get dev br0 grp $GRP vid $VID | grep -q permanent
+	check_err $? "host stream_reserved entry not reported as permanent"
+	bridge -d -s mdb get dev br0 grp $GRP vid $VID | grep "port br0" | \
+		grep -q " 0.00"
+	check_err $? "host stream_reserved entry has a pending group timer"
+	bridge mdb del dev br0 port br0 grp $GRP permanent vid $VID
 
 	# Add a port group with the flag and confirm it is reflected in dump.
 	bridge mdb add dev br0 port $swp2 grp $GRP permanent vid $VID \
@@ -326,6 +360,89 @@ fwd_sr_member_test()
 	sr_filter $swp1 off
 
 	log_test "MDB stream_reserved member delivery"
+}
+
+# An SR-class frame for a group the local bridge host has joined with
+# stream_reserved is delivered to the host (passed up via br0); without the
+# flag set on the host join, the same frame is denied at ingress.
+fwd_sr_host_member_test()
+{
+	RET=0
+
+	tc qdisc add dev br0 clsact
+	sr_filter $swp1 on
+
+	# Host join WITHOUT stream_reserved: SR-class frame must be dropped.
+	# A plain host-joined IP group cannot be permanent.
+	bridge mdb add dev br0 port br0 grp $GRP vid $VID
+	rx_filter_install br0 6 $GRP
+
+	send_mc $GRP $GRP_DMAC $SR_PCP
+	tc_check_packets "dev br0 ingress" 6 0
+	check_err $? "SR-class frame delivered to host without stream_reserved"
+
+	send_mc $GRP $GRP_DMAC $BE_PCP
+	tc_check_packets "dev br0 ingress" 6 1
+	check_err $? "best-effort frame not delivered to host"
+
+	# Replace host join WITH stream_reserved: SR-class frame admitted.
+	bridge mdb replace dev br0 port br0 grp $GRP permanent vid $VID \
+		stream_reserved
+	check_err $? "Failed to replace host group with stream_reserved"
+
+	send_mc $GRP $GRP_DMAC $SR_PCP
+	tc_check_packets "dev br0 ingress" 6 2
+	check_err $? "reserved-stream SR-class frame not delivered to host"
+
+	rx_filter_uninstall br0 6
+	bridge mdb del dev br0 port br0 grp $GRP permanent vid $VID
+	sr_filter $swp1 off
+	tc qdisc del dev br0 clsact
+
+	log_test "MDB stream_reserved host listener delivery"
+}
+
+# A permanent + stream_reserved host group has no group timer and must
+# outlive the membership interval, even when promoted from a plain (timer
+# armed) host join, which must not leave a stale group timer behind.
+fwd_sr_host_persistence_test()
+{
+	RET=0
+
+	ip link set dev br0 type bridge mcast_membership_interval 200
+
+	bridge mdb add dev br0 port br0 grp $GRP permanent vid $VID \
+		stream_reserved
+	check_err $? "Failed to add permanent stream_reserved host group"
+
+	sleep 3
+
+	bridge mdb get dev br0 grp $GRP vid $VID &>/dev/null
+	check_err $? "host stream_reserved entry expired"
+
+	bridge mdb del dev br0 port br0 grp $GRP permanent vid $VID
+
+	# A plain host join arms the group timer; promoting it to
+	# stream_reserved must cancel that timer, otherwise the reservation is
+	# torn down when the stale timer expires.
+	bridge mdb add dev br0 port br0 grp $GRP vid $VID
+	check_err $? "plain host join rejected"
+	bridge mdb replace dev br0 port br0 grp $GRP permanent vid $VID \
+		stream_reserved
+	check_err $? "Failed to promote plain host join to stream_reserved"
+	bridge -d -s mdb get dev br0 grp $GRP vid $VID | grep "port br0" | \
+		grep -q " 0.00"
+	check_err $? "stale group timer left after promotion to stream_reserved"
+
+	sleep 3
+
+	bridge mdb get dev br0 grp $GRP vid $VID &>/dev/null
+	check_err $? "promoted stream_reserved entry expired"
+
+	bridge mdb del dev br0 port br0 grp $GRP permanent vid $VID
+	ip link set dev br0 type bridge mcast_membership_interval 26000
+
+	log_test "MDB stream_reserved host entry persistence"
 }
 
 # swp1 filters SR-class ingress. A foreign (non-reserved) group GRP2 at SR class

@@ -748,9 +748,10 @@ enum {
  *    [MDBE_ATTR_xxx]
  *    ...
  *    [MDBE_ATTR_FLAGS]
- *       u32, a mask of MDB_FLAGS_* values to set on the entry. Valid only
- *       for port-group entries; currently only MDB_FLAGS_STREAM_RESERVED
- *       may be set from user space.
+ *       u32, a mask of MDB_FLAGS_* values to set on the entry. Currently
+ *       only MDB_FLAGS_STREAM_RESERVED may be set from user space, and is
+ *       accepted on both port-group and host-group entries (on the latter
+ *       it declares the local bridge host as a reserved-stream listener).
  * }
  */
 enum {

@@ -250,6 +250,9 @@ static int __mdb_fill_info(struct sk_buff *skb,
 	} else {
 		ifindex = mp->br->dev->ifindex;
 		mtimer = &mp->timer;
+		if (mp->flags & BRIDGE_MDBE_F_HOST_STREAM_RESERVED)
+			flags = MDB_PG_FLAGS_PERMANENT |
+				MDB_PG_FLAGS_STREAM_RESERVED;
 	}
 
 	__mdb_entry_fill_flags(&e, flags);
@@ -1059,7 +1062,10 @@ static int br_mdb_add_group(const struct br_mdb_config *cfg,
 			return -EEXIST;
 		}
 
-		br_multicast_host_join(brmctx, mp, false);
+		br_multicast_host_join(brmctx, mp,
+				       cfg->pg_flags & MDB_PG_FLAGS_STREAM_RESERVED ?
+				       BR_MCAST_SR_SET : BR_MCAST_SR_CLEAR,
+				       false);
 		br_mdb_notify(br->dev, mp, NULL, RTM_NEWMDB);
 
 		return 0;
@@ -1219,11 +1225,14 @@ static int br_mdb_config_attrs_init(struct nlattr *set_attrs,
 	}
 
 	if (mdb_attrs[MDBE_ATTR_FLAGS]) {
-		if (!cfg->p) {
-			NL_SET_ERR_MSG_MOD(extack, "Flags cannot be set for host groups");
+		u32 attr_flags = nla_get_u32(mdb_attrs[MDBE_ATTR_FLAGS]);
+
+		if (!cfg->p && (attr_flags & ~MDB_FLAGS_STREAM_RESERVED)) {
+			NL_SET_ERR_MSG_MOD(extack,
+					   "Only stream_reserved may be set on host groups");
 			return -EINVAL;
 		}
-		if (nla_get_u32(mdb_attrs[MDBE_ATTR_FLAGS]) & MDB_FLAGS_STREAM_RESERVED)
+		if (attr_flags & MDB_FLAGS_STREAM_RESERVED)
 			cfg->pg_flags |= MDB_PG_FLAGS_STREAM_RESERVED;
 	}
 
@@ -1320,8 +1329,8 @@ int br_mdb_add(struct net_device *dev, struct nlattr *tb[], u16 nlmsg_flags,
 
 	/* host join errors which can happen before creating the group */
 	if (!cfg.p && !br_group_is_l2(&cfg.group)) {
-		/* don't allow any flags for host-joined IP groups */
-		if (cfg.entry->state) {
+		if (cfg.entry->state &&
+		    !(cfg.pg_flags & MDB_PG_FLAGS_STREAM_RESERVED)) {
 			NL_SET_ERR_MSG_MOD(extack, "Flags are not allowed for host groups");
 			goto out;
 		}

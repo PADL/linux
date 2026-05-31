@@ -375,6 +375,18 @@ struct net_bridge_port_group {
 
 #define BRIDGE_MDBE_F_HOST_JOINED		BIT(0)
 #define BRIDGE_MDBE_F_HOST_STREAM_RESERVED	BIT(1)
+#define BRIDGE_MDBE_F_HOST_MASK \
+	(BRIDGE_MDBE_F_HOST_JOINED | BRIDGE_MDBE_F_HOST_STREAM_RESERVED)
+
+/* How a host join treats BRIDGE_MDBE_F_HOST_STREAM_RESERVED. Only the MDB
+ * netlink path administers the flag (SET/CLEAR); data-path joins must leave an
+ * existing reservation intact (KEEP).
+ */
+enum br_mcast_sr_op {
+	BR_MCAST_SR_KEEP,
+	BR_MCAST_SR_CLEAR,
+	BR_MCAST_SR_SET,
+};
 
 struct net_bridge_mdb_entry {
 	struct rhash_head		rhnode;
@@ -1049,7 +1061,8 @@ int br_mdb_dump(struct net_device *dev, struct sk_buff *skb,
 int br_mdb_get(struct net_device *dev, struct nlattr *tb[], u32 portid, u32 seq,
 	       struct netlink_ext_ack *extack);
 void br_multicast_host_join(const struct net_bridge_mcast *brmctx,
-			    struct net_bridge_mdb_entry *mp, bool notify);
+			    struct net_bridge_mdb_entry *mp,
+			    enum br_mcast_sr_op sr_op, bool notify);
 void br_multicast_host_leave(struct net_bridge_mdb_entry *mp, bool notify);
 void br_multicast_star_g_handle_mode(struct net_bridge_port_group *pg,
 				     u8 filter_mode);
