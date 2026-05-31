@@ -6880,6 +6880,12 @@ static int mv88e6xxx_port_mdb_add(struct dsa_switch *ds, int port,
 	} else if (state == MV88E6XXX_G1_ATU_DATA_STATE_MC_STATIC_AVB_NRL) {
 		err = mv88e6xxx_avb_mc_entry_added(chip);
 	}
+
+	dev_info(chip->dev,
+		 "AVB: p%d mdb_add %pM vid %d state 0x%02x avb_count %u err %d\n",
+		 port, mdb->addr, mdb->vid, state,
+		 refcount_read(&chip->tc_policy.avb_mdb_count), err);
+
 	if (err)
 		goto out;
 
@@ -6910,6 +6916,11 @@ static int mv88e6xxx_port_mdb_del(struct dsa_switch *ds, int port,
 
 	if (mv88e6xxx_atu_mc_entry_reserved(&existing, port, mdb))
 		err = mv88e6xxx_avb_mc_entry_deleted(chip);
+
+	dev_info(chip->dev,
+		 "AVB: p%d mdb_del %pM vid %d state 0x%02x avb_count %u err %d\n",
+		 port, mdb->addr, mdb->vid, existing.state,
+		 refcount_read(&chip->tc_policy.avb_mdb_count), err);
 
 out:
 	mv88e6xxx_reg_unlock(chip);
