@@ -72,6 +72,21 @@ static int br_pass_frame_up(struct sk_buff *skb, bool promisc)
 		       br_netif_receive_skb);
 }
 
+static bool br_mdb_is_dynamic_reservation(const struct net_bridge_mdb_entry *mdst)
+{
+	const struct net_bridge_port_group *pg;
+
+	if (!mdst)
+		return false;
+
+	for (pg = rcu_dereference(mdst->ports); pg;
+	     pg = rcu_dereference(pg->next))
+		if (pg->flags & MDB_PG_FLAGS_DYNAMIC_RESERVATION)
+			return true;
+
+	return false;
+}
+
 /* note: already called with rcu_read_lock */
 int br_handle_frame_finish(struct net *net, struct sock *sk, struct sk_buff *skb)
 {
@@ -186,6 +201,8 @@ int br_handle_frame_finish(struct net *net, struct sock *sk, struct sk_buff *skb
 	switch (pkt_type) {
 	case BR_PKT_MULTICAST:
 		mdst = br_mdb_entry_skb_get(brmctx, skb, vid);
+		br_tc_skb_dynamic_reservation_hit_set(skb,
+						      br_mdb_is_dynamic_reservation(mdst));
 		if ((mdst || BR_INPUT_SKB_CB_MROUTERS_ONLY(skb)) &&
 		    br_multicast_querier_exists(brmctx, eth_hdr(skb), mdst)) {
 			if ((mdst && mdst->host_joined) ||

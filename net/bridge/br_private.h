@@ -793,8 +793,34 @@ static inline void br_tc_skb_miss_set(struct sk_buff *skb, bool miss)
 		return;
 	ext->l2_miss = true;
 }
+
+static inline void br_tc_skb_dynamic_reservation_hit_set(struct sk_buff *skb,
+							 bool hit)
+{
+	struct tc_skb_ext *ext;
+
+	if (!tc_skb_ext_tc_enabled())
+		return;
+
+	ext = skb_ext_find(skb, TC_SKB_EXT);
+	if (ext) {
+		ext->dynamic_reservation_hit = hit;
+		return;
+	}
+	if (!hit)
+		return;
+	ext = tc_skb_ext_alloc(skb);
+	if (!ext)
+		return;
+	ext->dynamic_reservation_hit = true;
+}
 #else
 static inline void br_tc_skb_miss_set(struct sk_buff *skb, bool miss)
+{
+}
+
+static inline void br_tc_skb_dynamic_reservation_hit_set(struct sk_buff *skb,
+							 bool hit)
 {
 }
 #endif
