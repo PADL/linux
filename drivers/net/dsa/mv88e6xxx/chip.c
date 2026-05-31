@@ -2269,6 +2269,35 @@ static bool mv88e6xxx_port_db_find(struct mv88e6xxx_chip *chip,
 	return entry.state && ether_addr_equal(entry.mac, addr);
 }
 
+static int mv88e6xxx_port_db_loadpurge_entry(struct mv88e6xxx_chip *chip,
+					     int port, u16 fid,
+					     const unsigned char *addr,
+					     struct mv88e6xxx_atu_entry *entry,
+					     u8 state)
+{
+	/* Initialize a fresh ATU entry if it isn't found */
+	if (!entry->state || !ether_addr_equal(entry->mac, addr)) {
+		memset(entry, 0, sizeof(*entry));
+		ether_addr_copy(entry->mac, addr);
+	}
+
+	/* Purge the ATU entry only if no port is using it anymore */
+	if (!state) {
+		entry->portvec &= ~BIT(port);
+		if (!entry->portvec)
+			entry->state = 0;
+	} else {
+		if (state == MV88E6XXX_G1_ATU_DATA_STATE_UC_STATIC)
+			entry->portvec = BIT(port);
+		else
+			entry->portvec |= BIT(port);
+
+		entry->state = state;
+	}
+
+	return mv88e6xxx_g1_atu_loadpurge(chip, fid, entry);
+}
+
 static int mv88e6xxx_port_db_load_purge(struct mv88e6xxx_chip *chip, int port,
 					const unsigned char *addr, u16 vid,
 					u8 state)
@@ -2281,27 +2310,8 @@ static int mv88e6xxx_port_db_load_purge(struct mv88e6xxx_chip *chip, int port,
 	if (err)
 		return err;
 
-	/* Initialize a fresh ATU entry if it isn't found */
-	if (!entry.state || !ether_addr_equal(entry.mac, addr)) {
-		memset(&entry, 0, sizeof(entry));
-		ether_addr_copy(entry.mac, addr);
-	}
-
-	/* Purge the ATU entry only if no port is using it anymore */
-	if (!state) {
-		entry.portvec &= ~BIT(port);
-		if (!entry.portvec)
-			entry.state = 0;
-	} else {
-		if (state == MV88E6XXX_G1_ATU_DATA_STATE_UC_STATIC)
-			entry.portvec = BIT(port);
-		else
-			entry.portvec |= BIT(port);
-
-		entry.state = state;
-	}
-
-	return mv88e6xxx_g1_atu_loadpurge(chip, fid, &entry);
+	return mv88e6xxx_port_db_loadpurge_entry(chip, port, fid, addr, &entry,
+						 state);
 }
 
 static int mv88e6xxx_policy_apply(struct mv88e6xxx_chip *chip, int port,
@@ -6781,16 +6791,61 @@ unwind:
 	return err;
 }
 
+static bool mv88e6xxx_atu_mc_entry_changed(const struct mv88e6xxx_atu_entry *existing,
+					   int port,
+					   const struct switchdev_obj_port_mdb *mdb,
+					   u8 state)
+{
+	if (!ether_addr_equal(existing->mac, mdb->addr))
+		return false;
+
+	if (existing->state != MV88E6XXX_G1_ATU_DATA_STATE_MC_STATIC &&
+	    existing->state != MV88E6XXX_G1_ATU_DATA_STATE_MC_STATIC_AVB_NRL)
+		return false;
+
+	if (existing->state == state)
+		return false;
+
+	if (!(existing->portvec & ~BIT(port)))
+		return false;
+
+	return true;
+}
+
 static int mv88e6xxx_port_mdb_add(struct dsa_switch *ds, int port,
 				  const struct switchdev_obj_port_mdb *mdb,
 				  struct dsa_db db)
 {
 	struct mv88e6xxx_chip *chip = ds->priv;
+	struct mv88e6xxx_atu_entry existing;
+	u8 state;
+	u16 fid;
 	int err;
 
 	mv88e6xxx_reg_lock(chip);
-	err = mv88e6xxx_port_db_load_purge(chip, port, mdb->addr, mdb->vid,
-					   MV88E6XXX_G1_ATU_DATA_STATE_MC_STATIC);
+
+	/* Note that AVB_NRL entries persist independently of the MQPRIO mode;
+	 * as ingress rate control is not used by this driver, this is safe.
+	 */
+	if ((mdb->flags & SWITCHDEV_MDB_F_STREAM_RESERVED) && chip->info->qav)
+		state = MV88E6XXX_G1_ATU_DATA_STATE_MC_STATIC_AVB_NRL;
+	else
+		state = MV88E6XXX_G1_ATU_DATA_STATE_MC_STATIC;
+
+	err = mv88e6xxx_port_db_get(chip, mdb->addr, mdb->vid, &fid, &existing);
+	if (err)
+		goto out;
+
+	if (mv88e6xxx_atu_mc_entry_changed(&existing, port, mdb, state)) {
+		dev_info_ratelimited(chip->dev,
+				     "p%d: cannot offload MDB %pM: stream-reserved flag conflicts with existing entry\n",
+				     port, mdb->addr);
+		err = -EINVAL;
+		goto out;
+	}
+
+	err = mv88e6xxx_port_db_loadpurge_entry(chip, port, fid, mdb->addr,
+						&existing, state);
 	if (err)
 		goto out;
 
