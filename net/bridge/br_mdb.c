@@ -753,6 +753,7 @@ static int br_mdb_replace_group_sg(const struct br_mdb_config *cfg,
 {
 	unsigned long now = jiffies;
 
+	br_mdb_reservation_update(mp, pg->flags, flags);
 	pg->flags = flags;
 	pg->rt_protocol = cfg->rt_protocol;
 	if (!(flags & MDB_PG_FLAGS_PERMANENT) && !cfg->src_entry)
@@ -797,6 +798,7 @@ static int br_mdb_add_group_sg(const struct br_mdb_config *cfg,
 		return -ENOMEM;
 
 	rcu_assign_pointer(*pp, p);
+	br_mdb_reservation_update(mp, 0, flags);
 	if (!(flags & MDB_PG_FLAGS_PERMANENT) && !cfg->src_entry)
 		mod_timer(&p->timer,
 			  now + brmctx->multicast_membership_interval);
@@ -974,6 +976,7 @@ static int br_mdb_replace_group_star_g(const struct br_mdb_config *cfg,
 	if (err)
 		return err;
 
+	br_mdb_reservation_update(mp, pg->flags, flags);
 	pg->flags = flags;
 	pg->filter_mode = cfg->filter_mode;
 	pg->rt_protocol = cfg->rt_protocol;
@@ -1029,6 +1032,7 @@ static int br_mdb_add_group_star_g(const struct br_mdb_config *cfg,
 		goto err_del_port_group;
 
 	rcu_assign_pointer(*pp, p);
+	br_mdb_reservation_update(mp, 0, flags);
 	if (!(flags & MDB_PG_FLAGS_PERMANENT) &&
 	    cfg->filter_mode == MCAST_EXCLUDE)
 		mod_timer(&p->timer,
