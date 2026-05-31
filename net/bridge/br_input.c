@@ -11,6 +11,7 @@
 #include <linux/kernel.h>
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
+#include <linux/if_vlan.h>
 #include <linux/netfilter_bridge.h>
 #ifdef CONFIG_NETFILTER_FAMILY_BRIDGE
 #include <net/netfilter/nf_queue.h>
@@ -71,6 +72,57 @@ static int br_pass_frame_up(struct sk_buff *skb, bool promisc)
 		       dev_net(indev), NULL, skb, indev, NULL,
 		       br_netif_receive_skb);
 }
+
+#ifdef CONFIG_BRIDGE_8021Q_SRP
+/* Return false if the bridge has an MQPRIO/TAPRIO Qdisc that maps the
+ * frame's VLAN PCP to a non-zero traffic class.
+ */
+static bool br_skb_is_sr_class(const struct net_bridge *br,
+			       const struct sk_buff *skb)
+{
+	if (!skb_vlan_tag_present(skb) || !netdev_get_num_tc(br->dev))
+		return false;
+
+	return netdev_get_prio_tc_map(br->dev, skb_vlan_tag_get_prio(skb)) != 0;
+}
+
+/* 802.1Qat admission control: a frame whose priority maps to a non-zero
+ * TC and which ingresses a port with BR_FILTER_STREAM_RESERVED is admitted
+ * only if it belongs to a reserved stream. Only multicast can be a reserved
+ * stream: either via an MDB port-group member with MDB_PG_FLAGS_STREAM_RESERVED,
+ * or via a host-group entry marked BRIDGE_MDBE_F_HOST_STREAM_RESERVED.
+ */
+static bool br_sr_admission_denied(const struct net_bridge_port *p,
+				   const struct sk_buff *skb,
+				   const struct net_bridge_mdb_entry *mdst)
+{
+	const struct net_bridge_port_group *pg;
+
+	if (!(p->flags & BR_FILTER_STREAM_RESERVED) ||
+	    !br_skb_is_sr_class(p->br, skb))
+		return false;
+
+	if (!mdst)
+		return true;
+
+	if (mdst->flags & BRIDGE_MDBE_F_HOST_STREAM_RESERVED)
+		return false;
+
+	for (pg = rcu_dereference(mdst->ports); pg;
+	     pg = rcu_dereference(pg->next))
+		if (pg->flags & MDB_PG_FLAGS_STREAM_RESERVED)
+			return false;
+
+	return true;
+}
+#else
+static inline bool br_sr_admission_denied(const struct net_bridge_port *p,
+					  const struct sk_buff *skb,
+					  const struct net_bridge_mdb_entry *mdst)
+{
+	return false;
+}
+#endif
 
 /* note: already called with rcu_read_lock */
 int br_handle_frame_finish(struct net *net, struct sock *sk, struct sk_buff *skb)
@@ -183,9 +235,14 @@ int br_handle_frame_finish(struct net *net, struct sock *sk, struct sk_buff *skb
 				br_do_suppress_nd(skb, br, vid, p, msg);
 	}
 
+	mdst = pkt_type == BR_PKT_MULTICAST ?
+	       br_mdb_entry_skb_get(brmctx, skb, vid) : NULL;
+
+	if (br_sr_admission_denied(p, skb, mdst))
+		goto drop;
+
 	switch (pkt_type) {
 	case BR_PKT_MULTICAST:
-		mdst = br_mdb_entry_skb_get(brmctx, skb, vid);
 		if ((mdst || BR_INPUT_SKB_CB_MROUTERS_ONLY(skb)) &&
 		    br_multicast_querier_exists(brmctx, eth_hdr(skb), mdst)) {
 			if ((mdst && (mdst->flags & BRIDGE_MDBE_F_HOST_JOINED)) ||

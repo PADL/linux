@@ -1106,6 +1106,14 @@ enum {
  *   backup port that has VLAN tunnel mapping enabled (via the
  *   *IFLA_BRPORT_VLAN_TUNNEL* option). Setting a value of 0 (default) has
  *   the effect of not attaching any ID.
+ *
+ * @IFLA_BRPORT_FILTER_STREAM_RESERVED
+ *   Controls whether the port enforces 802.1Qat stream reservation
+ *   admission control. When enabled, a frame received on the port whose
+ *   802.1p priority maps (via an MQPRIO/TAPRIO Qdisc on the bridge) to a
+ *   non-zero traffic class is dropped at ingress unless it belongs to a
+ *   reserved stream, i.e. it is multicast and its destination address has a
+ *   stream-reserved MDB entry. The flag is off by default.
  */
 enum {
 	IFLA_BRPORT_UNSPEC,
@@ -1154,6 +1162,7 @@ enum {
 	IFLA_BRPORT_NEIGH_VLAN_SUPPRESS,
 	IFLA_BRPORT_BACKUP_NHID,
 	IFLA_BRPORT_NEIGH_FORWARD_GRAT,
+	IFLA_BRPORT_FILTER_STREAM_RESERVED,
 	__IFLA_BRPORT_MAX
 };
 #define IFLA_BRPORT_MAX (__IFLA_BRPORT_MAX - 1)

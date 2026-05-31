@@ -373,7 +373,8 @@ struct net_bridge_port_group {
 	struct rcu_head			rcu;
 };
 
-#define BRIDGE_MDBE_F_HOST_JOINED	BIT(0)
+#define BRIDGE_MDBE_F_HOST_JOINED		BIT(0)
+#define BRIDGE_MDBE_F_HOST_STREAM_RESERVED	BIT(1)
 
 struct net_bridge_mdb_entry {
 	struct rhash_head		rhnode;

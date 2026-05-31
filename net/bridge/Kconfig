@@ -47,6 +47,28 @@ config BRIDGE_IGMP_SNOOPING
 
 	  If unsure, say Y.
 
+config BRIDGE_8021Q_SRP
+	bool "802.1Qat Stream Reservation Protocol (SRP) admission control"
+	depends on BRIDGE
+	default n
+	help
+	  If you say Y here, then the Ethernet bridge will enforce 802.1Qat
+	  stream reservation admission control in software on ingress ports
+	  that have the BR_FILTER_STREAM_RESERVED flag set: a frame whose
+	  802.1p priority maps (via an MQPRIO/TAPRIO Qdisc on the bridge) to
+	  a non-zero traffic class is dropped unless it is multicast and its
+	  destination address MDB_FLAGS_STREAM_RESERVED set on its MDB entry.
+
+	  This option only controls software enforcement. The
+	  BR_FILTER_STREAM_RESERVED port flag and MDB_FLAGS_STREAM_RESERVED
+	  MDB flag are always accepted from user space and propagated via
+	  switchdev so that hardware-offloading switches can enforce
+	  admission control even when this option is disabled.
+
+	  Say N to exclude software enforcement and reduce the binary size.
+
+	  If unsure, say N.
+
 config BRIDGE_VLAN_FILTERING
 	bool "VLAN filtering"
 	depends on BRIDGE
