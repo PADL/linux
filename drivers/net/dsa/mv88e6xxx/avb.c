@@ -129,17 +129,25 @@ int mv88e6xxx_avb_enable(struct mv88e6xxx_chip *chip,
 	if (err)
 		return err;
 
-	err = mv88e6xxx_avb_write(chip, MV88E6XXX_AVB_CFG_AVB,
-				  mv88e6xxx_avb_pri_map_to_reg(&mqprio->qopt));
+	/* interpret AVB_NRL bits in the ATU as dynamic reservations */
+	err = mv88e6xxx_g1_atu_set_mac_avb(chip, true);
 	if (err)
 		goto err_iso_ptr;
 
+	err = mv88e6xxx_avb_write(chip, MV88E6XXX_AVB_CFG_AVB,
+				  mv88e6xxx_avb_pri_map_to_reg(&mqprio->qopt));
+	if (err)
+		goto err_mac_avb;
+
+	/* Put every user port in enhanced AVB mode: AVB-priority frames are
+	 * admitted to the AVB queues only on an ATU dynamic-reservation hit.
+	 */
 	for (port = 0; port < mv88e6xxx_num_ports(chip); port++) {
 		if (!dsa_is_user_port(chip->ds, port))
 			continue;
 
 		err = mv88e6xxx_avb_set_port_avb_mode(chip, port,
-						      MV88E6XXX_PORT_AVB_CFG_AVB_MODE_STANDARD);
+						      MV88E6XXX_PORT_AVB_CFG_AVB_MODE_ENHANCED);
 		if (err)
 			goto err_port_mode;
 	}
@@ -156,6 +164,8 @@ err_port_mode:
 						MV88E6XXX_PORT_AVB_CFG_AVB_MODE_LEGACY);
 	}
 	mv88e6xxx_avb_write(chip, MV88E6XXX_AVB_CFG_AVB, qav->avb_pri_map);
+err_mac_avb:
+	mv88e6xxx_g1_atu_set_mac_avb(chip, false);
 err_iso_ptr:
 	mv88e6xxx_qav_set_iso_ptr(chip, 0);
 
@@ -182,6 +192,10 @@ int mv88e6xxx_avb_disable(struct mv88e6xxx_chip *chip)
 	}
 
 	err = mv88e6xxx_avb_write(chip, MV88E6XXX_AVB_CFG_AVB, qav->avb_pri_map);
+	if (err)
+		return err;
+
+	err = mv88e6xxx_g1_atu_set_mac_avb(chip, false);
 	if (err)
 		return err;
 

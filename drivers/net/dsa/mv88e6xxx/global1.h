@@ -323,6 +323,7 @@ int mv88e6390_g1_rmu_disable(struct mv88e6xxx_chip *chip);
 int mv88e6xxx_g1_set_device_number(struct mv88e6xxx_chip *chip, int index);
 
 int mv88e6xxx_g1_atu_set_learn2all(struct mv88e6xxx_chip *chip, bool learn2all);
+int mv88e6xxx_g1_atu_set_mac_avb(struct mv88e6xxx_chip *chip, bool mac_avb);
 int mv88e6xxx_g1_atu_set_age_time(struct mv88e6xxx_chip *chip,
 				  unsigned int msecs);
 int mv88e6xxx_g1_atu_getnext(struct mv88e6xxx_chip *chip, u16 fid,
