@@ -73,12 +73,19 @@ static int mv88e6xxx_qav_set_iso_ptr(struct mv88e6xxx_chip *chip, u16 threshold)
 int mv88e6xxx_avb_set_port_avb_mode(struct mv88e6xxx_chip *chip,
 				    int port, enum mv88e6xxx_avb_mode mode)
 {
-	u16 data;
+	static const char * const mode_names[] = {
+		[MV88E6XXX_AVB_MODE_DISABLED] = "disabled",
+		[MV88E6XXX_AVB_MODE_STANDARD] = "standard",
+		[MV88E6XXX_AVB_MODE_ENHANCED] = "enhanced",
+	};
+	u16 data, orig;
 	int err;
 
 	err = mv88e6xxx_port_avb_read(chip, port, MV88E6XXX_PORT_AVB_CFG, &data, 1);
 	if (err)
 		return err;
+
+	orig = data;
 
 	data &= ~(MV88E6XXX_PORT_AVB_CFG_AVB_MODE |
 		  MV88E6XXX_PORT_AVB_CFG_AVB_FILTER_BAD_AVB |
@@ -101,6 +108,10 @@ int mv88e6xxx_avb_set_port_avb_mode(struct mv88e6xxx_chip *chip,
 			MV88E6XXX_PORT_AVB_CFG_AVB_DISCARD_BAD;
 		break;
 	}
+
+	if (data != orig)
+		dev_info(chip->dev, "p%d: AVB mode %s, cfg %#06x -> %#06x\n",
+			 port, mode_names[mode], orig, data);
 
 	return mv88e6xxx_port_avb_write(chip, port, MV88E6XXX_PORT_AVB_CFG, data);
 }

@@ -6827,10 +6827,14 @@ static int mv88e6xxx_port_mdb_add(struct dsa_switch *ds, int port,
 	/* Note that AVB_NRL entries persist independently of the MQPRIO mode;
 	 * as ingress rate control is not used by this driver, this is safe.
 	 */
-	if ((mdb->flags & SWITCHDEV_MDB_F_STREAM_RESERVED) && chip->info->qav)
+	if ((mdb->flags & SWITCHDEV_MDB_F_STREAM_RESERVED) && chip->info->qav) {
 		state = MV88E6XXX_G1_ATU_DATA_STATE_MC_STATIC_AVB_NRL;
-	else
+		dev_info(chip->dev,
+			 "p%d: offloading stream-reserved (AVB_NRL) MDB %pM vid %d\n",
+			 port, mdb->addr, mdb->vid);
+	} else {
 		state = MV88E6XXX_G1_ATU_DATA_STATE_MC_STATIC;
+	}
 
 	err = mv88e6xxx_port_db_get(chip, mdb->addr, mdb->vid, &fid, &existing);
 	if (err)
