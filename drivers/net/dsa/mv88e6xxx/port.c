@@ -1632,8 +1632,8 @@ int mv88e6095_port_tag_remap(struct mv88e6xxx_chip *chip, int port)
 				    0x7654);
 }
 
-static int mv88e6xxx_port_ieeepmt_write(struct mv88e6xxx_chip *chip,
-					int port, u16 table, u8 ptr, u16 data)
+int mv88e6xxx_port_ieeepmt_write(struct mv88e6xxx_chip *chip,
+				 int port, u16 table, u8 ptr, u16 data)
 {
 	u16 reg;
 
@@ -1643,6 +1643,30 @@ static int mv88e6xxx_port_ieeepmt_write(struct mv88e6xxx_chip *chip,
 
 	return mv88e6xxx_port_write(chip, port,
 				    MV88E6390_PORT_IEEE_PRIO_MAP_TABLE, reg);
+}
+
+int mv88e6xxx_port_ieeepmt_read(struct mv88e6xxx_chip *chip, int port,
+				u16 table, u8 ptr, u16 *data)
+{
+	u16 reg;
+	int err;
+
+	reg = table |
+		(ptr << __bf_shf(MV88E6390_PORT_IEEE_PRIO_MAP_TABLE_PTR_MASK));
+
+	err = mv88e6xxx_port_write(chip, port,
+				   MV88E6390_PORT_IEEE_PRIO_MAP_TABLE, reg);
+	if (err)
+		return err;
+
+	err = mv88e6xxx_port_read(chip, port,
+				  MV88E6390_PORT_IEEE_PRIO_MAP_TABLE, &reg);
+	if (err)
+		return err;
+
+	*data = reg & MV88E6390_PORT_IEEE_PRIO_MAP_TABLE_DATA_MASK;
+
+	return 0;
 }
 
 int mv88e6390_port_tag_remap(struct mv88e6xxx_chip *chip, int port)

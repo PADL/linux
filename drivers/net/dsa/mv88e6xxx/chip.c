@@ -35,6 +35,7 @@
 #include <net/pkt_sched.h>
 
 #include "chip.h"
+#include "dcb.h"
 #include "devlink.h"
 #include "global1.h"
 #include "global2.h"
@@ -4266,6 +4267,7 @@ static const struct mv88e6xxx_ops mv88e6085_ops = {
 	.stu_loadpurge = mv88e6352_g1_stu_loadpurge,
 	.phylink_get_caps = mv88e6185_phylink_get_caps,
 	.set_max_frame_size = mv88e6185_g1_set_max_frame_size,
+	.dcb_ops = &mv88e6352_dcb_ops,
 };
 
 static const struct mv88e6xxx_ops mv88e6095_ops = {
@@ -4298,6 +4300,7 @@ static const struct mv88e6xxx_ops mv88e6095_ops = {
 	.phylink_get_caps = mv88e6095_phylink_get_caps,
 	.pcs_ops = &mv88e6185_pcs_ops,
 	.set_max_frame_size = mv88e6185_g1_set_max_frame_size,
+	.dcb_ops = &mv88e6352_dcb_ops,
 };
 
 static const struct mv88e6xxx_ops mv88e6097_ops = {
@@ -4345,6 +4348,7 @@ static const struct mv88e6xxx_ops mv88e6097_ops = {
 	.stu_getnext = mv88e6352_g1_stu_getnext,
 	.stu_loadpurge = mv88e6352_g1_stu_loadpurge,
 	.set_max_frame_size = mv88e6185_g1_set_max_frame_size,
+	.dcb_ops = &mv88e6352_dcb_ops,
 };
 
 static const struct mv88e6xxx_ops mv88e6123_ops = {
@@ -4386,6 +4390,7 @@ static const struct mv88e6xxx_ops mv88e6123_ops = {
 	.stu_loadpurge = mv88e6352_g1_stu_loadpurge,
 	.phylink_get_caps = mv88e6185_phylink_get_caps,
 	.set_max_frame_size = mv88e6185_g1_set_max_frame_size,
+	.dcb_ops = &mv88e6352_dcb_ops,
 };
 
 static const struct mv88e6xxx_ops mv88e6131_ops = {
@@ -4426,6 +4431,7 @@ static const struct mv88e6xxx_ops mv88e6131_ops = {
 	.vtu_getnext = mv88e6185_g1_vtu_getnext,
 	.vtu_loadpurge = mv88e6185_g1_vtu_loadpurge,
 	.phylink_get_caps = mv88e6185_phylink_get_caps,
+	.dcb_ops = &mv88e6352_dcb_ops,
 };
 
 static const struct mv88e6xxx_ops mv88e6141_ops = {
@@ -4489,6 +4495,7 @@ static const struct mv88e6xxx_ops mv88e6141_ops = {
 	.serdes_get_regs = mv88e6390_serdes_get_regs,
 	.phylink_get_caps = mv88e6341_phylink_get_caps,
 	.pcs_ops = &mv88e6390_pcs_ops,
+	.dcb_ops = &mv88e6352_dcb_ops,
 };
 
 static const struct mv88e6xxx_ops mv88e6161_ops = {
@@ -4537,6 +4544,7 @@ static const struct mv88e6xxx_ops mv88e6161_ops = {
 	.ptp_ops = &mv88e6165_ptp_ops,
 	.phylink_get_caps = mv88e6185_phylink_get_caps,
 	.set_max_frame_size = mv88e6185_g1_set_max_frame_size,
+	.dcb_ops = &mv88e6352_dcb_ops,
 };
 
 static const struct mv88e6xxx_ops mv88e6165_ops = {
@@ -4574,6 +4582,7 @@ static const struct mv88e6xxx_ops mv88e6165_ops = {
 	.avb_ops = &mv88e6165_avb_ops,
 	.ptp_ops = &mv88e6165_ptp_ops,
 	.phylink_get_caps = mv88e6185_phylink_get_caps,
+	.dcb_ops = &mv88e6352_dcb_ops,
 };
 
 static const struct mv88e6xxx_ops mv88e6171_ops = {
@@ -4620,6 +4629,7 @@ static const struct mv88e6xxx_ops mv88e6171_ops = {
 	.stu_getnext = mv88e6352_g1_stu_getnext,
 	.stu_loadpurge = mv88e6352_g1_stu_loadpurge,
 	.phylink_get_caps = mv88e6351_phylink_get_caps,
+	.dcb_ops = &mv88e6352_dcb_ops,
 };
 
 static const struct mv88e6xxx_ops mv88e6172_ops = {
@@ -4677,6 +4687,7 @@ static const struct mv88e6xxx_ops mv88e6172_ops = {
 	.gpio_ops = &mv88e6352_gpio_ops,
 	.phylink_get_caps = mv88e6352_phylink_get_caps,
 	.pcs_ops = &mv88e6352_pcs_ops,
+	.dcb_ops = &mv88e6352_dcb_ops,
 };
 
 static const struct mv88e6xxx_ops mv88e6175_ops = {
@@ -4723,6 +4734,7 @@ static const struct mv88e6xxx_ops mv88e6175_ops = {
 	.stu_getnext = mv88e6352_g1_stu_getnext,
 	.stu_loadpurge = mv88e6352_g1_stu_loadpurge,
 	.phylink_get_caps = mv88e6351_phylink_get_caps,
+	.dcb_ops = &mv88e6352_dcb_ops,
 };
 
 static const struct mv88e6xxx_ops mv88e6176_ops = {
@@ -4781,6 +4793,7 @@ static const struct mv88e6xxx_ops mv88e6176_ops = {
 	.gpio_ops = &mv88e6352_gpio_ops,
 	.phylink_get_caps = mv88e6352_phylink_get_caps,
 	.pcs_ops = &mv88e6352_pcs_ops,
+	.dcb_ops = &mv88e6352_dcb_ops,
 };
 
 static const struct mv88e6xxx_ops mv88e6185_ops = {
@@ -4819,6 +4832,7 @@ static const struct mv88e6xxx_ops mv88e6185_ops = {
 	.phylink_get_caps = mv88e6185_phylink_get_caps,
 	.pcs_ops = &mv88e6185_pcs_ops,
 	.set_max_frame_size = mv88e6185_g1_set_max_frame_size,
+	.dcb_ops = &mv88e6352_dcb_ops,
 };
 
 static const struct mv88e6xxx_ops mv88e6190_ops = {
@@ -4838,6 +4852,7 @@ static const struct mv88e6xxx_ops mv88e6190_ops = {
 	.port_set_speed_duplex = mv88e6390_port_set_speed_duplex,
 	.port_max_speed_mode = mv88e6390_port_max_speed_mode,
 	.port_tag_remap = mv88e6390_port_tag_remap,
+	.dcb_ops = &mv88e6390_dcb_ops,
 	.port_set_policy = mv88e6352_port_set_policy,
 	.port_set_frame_mode = mv88e6351_port_set_frame_mode,
 	.port_set_ucast_flood = mv88e6352_port_set_ucast_flood,
@@ -4939,6 +4954,7 @@ static const struct mv88e6xxx_ops mv88e6190x_ops = {
 	.gpio_ops = &mv88e6352_gpio_ops,
 	.phylink_get_caps = mv88e6390x_phylink_get_caps,
 	.pcs_ops = &mv88e6390_pcs_ops,
+	.dcb_ops = &mv88e6390_dcb_ops,
 };
 
 static const struct mv88e6xxx_ops mv88e6191_ops = {
@@ -4998,6 +5014,7 @@ static const struct mv88e6xxx_ops mv88e6191_ops = {
 	.ptp_ops = &mv88e6352_ptp_ops,
 	.phylink_get_caps = mv88e6390_phylink_get_caps,
 	.pcs_ops = &mv88e6390_pcs_ops,
+	.dcb_ops = &mv88e6390_dcb_ops,
 };
 
 static const struct mv88e6xxx_ops mv88e6240_ops = {
@@ -5059,6 +5076,7 @@ static const struct mv88e6xxx_ops mv88e6240_ops = {
 	.ptp_ops = &mv88e6352_ptp_ops,
 	.phylink_get_caps = mv88e6352_phylink_get_caps,
 	.pcs_ops = &mv88e6352_pcs_ops,
+	.dcb_ops = &mv88e6352_dcb_ops,
 };
 
 static const struct mv88e6xxx_ops mv88e6250_ops = {
@@ -5104,6 +5122,7 @@ static const struct mv88e6xxx_ops mv88e6250_ops = {
 	.ptp_ops = &mv88e6352_ptp_ops,
 	.phylink_get_caps = mv88e6250_phylink_get_caps,
 	.set_max_frame_size = mv88e6185_g1_set_max_frame_size,
+	.dcb_ops = &mv88e6352_dcb_ops,
 };
 
 static const struct mv88e6xxx_ops mv88e6290_ops = {
@@ -5166,6 +5185,7 @@ static const struct mv88e6xxx_ops mv88e6290_ops = {
 	.phylink_get_caps = mv88e6390_phylink_get_caps,
 	.pcs_ops = &mv88e6390_pcs_ops,
 	.tcam_ops = &mv88e6390_tcam_ops,
+	.dcb_ops = &mv88e6390_dcb_ops,
 };
 
 static const struct mv88e6xxx_ops mv88e6320_ops = {
@@ -5220,6 +5240,7 @@ static const struct mv88e6xxx_ops mv88e6320_ops = {
 	.avb_ops = &mv88e6352_avb_ops,
 	.ptp_ops = &mv88e6352_ptp_ops,
 	.phylink_get_caps = mv88e632x_phylink_get_caps,
+	.dcb_ops = &mv88e6352_dcb_ops,
 };
 
 static const struct mv88e6xxx_ops mv88e6321_ops = {
@@ -5274,6 +5295,8 @@ static const struct mv88e6xxx_ops mv88e6321_ops = {
 	.avb_ops = &mv88e6352_avb_ops,
 	.ptp_ops = &mv88e6352_ptp_ops,
 	.phylink_get_caps = mv88e632x_phylink_get_caps,
+	.pcs_ops = &mv88e6352_pcs_ops,
+	.dcb_ops = &mv88e6352_dcb_ops,
 };
 
 static const struct mv88e6xxx_ops mv88e6341_ops = {
@@ -5340,6 +5363,7 @@ static const struct mv88e6xxx_ops mv88e6341_ops = {
 	.serdes_get_regs = mv88e6390_serdes_get_regs,
 	.phylink_get_caps = mv88e6341_phylink_get_caps,
 	.pcs_ops = &mv88e6390_pcs_ops,
+	.dcb_ops = &mv88e6352_dcb_ops,
 };
 
 static const struct mv88e6xxx_ops mv88e6350_ops = {
@@ -5386,6 +5410,7 @@ static const struct mv88e6xxx_ops mv88e6350_ops = {
 	.stu_getnext = mv88e6352_g1_stu_getnext,
 	.stu_loadpurge = mv88e6352_g1_stu_loadpurge,
 	.phylink_get_caps = mv88e6351_phylink_get_caps,
+	.dcb_ops = &mv88e6352_dcb_ops,
 };
 
 static const struct mv88e6xxx_ops mv88e6351_ops = {
@@ -5434,6 +5459,7 @@ static const struct mv88e6xxx_ops mv88e6351_ops = {
 	.avb_ops = &mv88e6352_avb_ops,
 	.ptp_ops = &mv88e6352_ptp_ops,
 	.phylink_get_caps = mv88e6351_phylink_get_caps,
+	.dcb_ops = &mv88e6352_dcb_ops,
 };
 
 static const struct mv88e6xxx_ops mv88e6352_ops = {
@@ -5498,6 +5524,7 @@ static const struct mv88e6xxx_ops mv88e6352_ops = {
 	.serdes_get_regs = mv88e6352_serdes_get_regs,
 	.phylink_get_caps = mv88e6352_phylink_get_caps,
 	.pcs_ops = &mv88e6352_pcs_ops,
+	.dcb_ops = &mv88e6352_dcb_ops,
 };
 
 static const struct mv88e6xxx_ops mv88e6390_ops = {
@@ -5564,6 +5591,7 @@ static const struct mv88e6xxx_ops mv88e6390_ops = {
 	.phylink_get_caps = mv88e6390_phylink_get_caps,
 	.pcs_ops = &mv88e6390_pcs_ops,
 	.tcam_ops = &mv88e6390_tcam_ops,
+	.dcb_ops = &mv88e6390_dcb_ops,
 };
 
 static const struct mv88e6xxx_ops mv88e6390x_ops = {
@@ -5629,6 +5657,7 @@ static const struct mv88e6xxx_ops mv88e6390x_ops = {
 	.ptp_ops = &mv88e6390_ptp_ops,
 	.phylink_get_caps = mv88e6390x_phylink_get_caps,
 	.pcs_ops = &mv88e6390_pcs_ops,
+	.dcb_ops = &mv88e6390_dcb_ops,
 };
 
 static const struct mv88e6xxx_ops mv88e6393x_ops = {
@@ -5695,6 +5724,7 @@ static const struct mv88e6xxx_ops mv88e6393x_ops = {
 	.phylink_get_caps = mv88e6393x_phylink_get_caps,
 	.pcs_ops = &mv88e6393x_pcs_ops,
 	.tcam_ops = &mv88e6393_tcam_ops,
+	.dcb_ops = &mv88e6393x_dcb_ops,
 };
 
 static const struct mv88e6xxx_qav_info mv88e6352_qav_info = {
@@ -7403,6 +7433,9 @@ static const struct dsa_switch_ops mv88e6xxx_switch_ops = {
 	.port_hwtstamp_get	= mv88e6xxx_port_hwtstamp_get,
 	.port_txtstamp		= mv88e6xxx_port_txtstamp,
 	.port_rxtstamp		= mv88e6xxx_port_rxtstamp,
+	.port_get_pcp_prio	= mv88e6xxx_port_get_pcp_prio,
+	.port_add_pcp_prio	= mv88e6xxx_port_add_pcp_prio,
+	.port_del_pcp_prio	= mv88e6xxx_port_del_pcp_prio,
 	.port_setup_tc		= mv88e6xxx_port_setup_tc,
 	.cls_flower_add		= mv88e6xxx_cls_flower_add,
 	.cls_flower_del         = mv88e6xxx_cls_flower_del,
@@ -7420,6 +7453,7 @@ static const struct dsa_switch_ops mv88e6xxx_switch_ops = {
 
 static int mv88e6xxx_register_switch(struct mv88e6xxx_chip *chip)
 {
+	const struct mv88e6xxx_dcb_ops *dcb_ops = chip->info->ops->dcb_ops;
 	struct device *dev = chip->dev;
 	struct dsa_switch *ds;
 
@@ -7435,6 +7469,9 @@ static int mv88e6xxx_register_switch(struct mv88e6xxx_chip *chip)
 	ds->phylink_mac_ops = &mv88e6xxx_phylink_mac_ops;
 	ds->ageing_time_min = chip->info->age_time_coeff;
 	ds->ageing_time_max = chip->info->age_time_coeff * U8_MAX;
+
+	ds->pcp_prio_mapping_is_global = dcb_ops &&
+					 dcb_ops->global_get_pcp_prio;
 
 	/* Some chips support up to 32, but that requires enabling the
 	 * 5-bit port mode, which we do not support. 640k^W16 ought to
