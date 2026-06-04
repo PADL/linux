@@ -211,6 +211,7 @@ struct mv88e6xxx_stu_entry {
 };
 
 struct mv88e6xxx_bus_ops;
+struct mv88e6xxx_dcb_ops;
 struct mv88e6xxx_irq_ops;
 struct mv88e6xxx_gpio_ops;
 struct mv88e6xxx_avb_ops;
@@ -729,6 +730,9 @@ struct mv88e6xxx_ops {
 
 	/* Ternary Content Addressable Memory operations */
 	const struct mv88e6xxx_tcam_ops *tcam_ops;
+
+	/* Data Center Bridging operations */
+	const struct mv88e6xxx_dcb_ops *dcb_ops;
 };
 
 struct mv88e6xxx_irq_ops {
@@ -778,6 +782,19 @@ struct mv88e6xxx_avb_ops {
 	/* Access port-scoped 802.1Qav registers */
 	int (*port_qav_write)(struct mv88e6xxx_chip *chip, int port, int addr,
 			      u16 data);
+};
+
+struct mv88e6xxx_dcb_ops {
+	/* Get/set the chip's global PCP to queue priority mapping */
+	int (*global_get_pcp_prio)(struct mv88e6xxx_chip *chip, u8 pcp);
+	int (*global_set_pcp_prio)(struct mv88e6xxx_chip *chip, u8 pcp,
+				   u8 prio);
+
+	/* Get/set a port's PCP to queue priority mapping */
+	int (*port_get_pcp_prio)(struct mv88e6xxx_chip *chip, int port,
+				 u8 pcp);
+	int (*port_set_pcp_prio)(struct mv88e6xxx_chip *chip, int port,
+				 u8 pcp, u8 prio);
 };
 
 struct mv88e6xxx_ptp_ops {
