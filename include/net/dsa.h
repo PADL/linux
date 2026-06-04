@@ -447,6 +447,11 @@ struct dsa_switch {
 	 */
 	u32			dscp_prio_mapping_is_global:1;
 
+	/* Drivers that have global PCP mapping settings must set this to
+	 * true to automatically apply the settings to all ports.
+	 */
+	u32			pcp_prio_mapping_is_global:1;
+
 	/* Listener for switch fabric events */
 	struct notifier_block	nb;
 
@@ -954,6 +959,11 @@ struct dsa_switch_ops {
 				      u8 prio);
 	int	(*port_del_dscp_prio)(struct dsa_switch *ds, int port, u8 dscp,
 				      u8 prio);
+	int	(*port_get_pcp_prio)(struct dsa_switch *ds, int port, u8 pcp);
+	int	(*port_add_pcp_prio)(struct dsa_switch *ds, int port, u8 pcp,
+				     u8 prio);
+	int	(*port_del_pcp_prio)(struct dsa_switch *ds, int port, u8 pcp,
+				     u8 prio);
 	int	(*port_set_apptrust)(struct dsa_switch *ds, int port,
 				     const u8 *sel, int nsel);
 	int	(*port_get_apptrust)(struct dsa_switch *ds, int port, u8 *sel,
