@@ -456,11 +456,15 @@
 #define MV88E6390_PORT_IEEE_PRIO_MAP_TABLE_EGRESS_GREEN_PCP	0x1000
 #define MV88E6390_PORT_IEEE_PRIO_MAP_TABLE_EGRESS_YELLOW_PCP	0x2000
 #define MV88E6390_PORT_IEEE_PRIO_MAP_TABLE_EGRESS_AVB_PCP	0x3000
+#define MV88E6393X_PORT_IEEE_PRIO_MAP_TABLE_INGRESS_PCP_DEI	0x4000
 #define MV88E6390_PORT_IEEE_PRIO_MAP_TABLE_EGRESS_GREEN_DSCP	0x5000
 #define MV88E6390_PORT_IEEE_PRIO_MAP_TABLE_EGRESS_YELLOW_DSCP	0x6000
 #define MV88E6390_PORT_IEEE_PRIO_MAP_TABLE_EGRESS_AVB_DSCP	0x7000
 #define MV88E6390_PORT_IEEE_PRIO_MAP_TABLE_PTR_MASK		0x0e00
 #define MV88E6390_PORT_IEEE_PRIO_MAP_TABLE_DATA_MASK		0x01ff
+#define MV88E6390_PORT_IEEE_PRIO_MAP_TABLE_QPRI_DIS		0x0080
+#define MV88E6390_PORT_IEEE_PRIO_MAP_TABLE_QPRI_MASK		0x0070
+#define MV88E6390_PORT_IEEE_PRIO_MAP_TABLE_QPRI_SHIFT		4
 
 /* Offset 0x18: Port IEEE Priority Remapping Registers (0-3) */
 #define MV88E6095_PORT_IEEE_PRIO_REMAP_0123	0x18
@@ -542,6 +546,10 @@ int mv88e6xxx_port_set_8021q_mode(struct mv88e6xxx_chip *chip, int port,
 				  u16 mode);
 int mv88e6095_port_tag_remap(struct mv88e6xxx_chip *chip, int port);
 int mv88e6390_port_tag_remap(struct mv88e6xxx_chip *chip, int port);
+int mv88e6xxx_port_ieeepmt_write(struct mv88e6xxx_chip *chip,
+				 int port, u16 table, u8 ptr, u16 data);
+int mv88e6xxx_port_ieeepmt_read(struct mv88e6xxx_chip *chip, int port,
+				u16 table, u8 ptr, u16 *data);
 int mv88e6xxx_port_set_egress_mode(struct mv88e6xxx_chip *chip, int port,
 				   enum mv88e6xxx_egress_mode mode);
 int mv88e6085_port_set_frame_mode(struct mv88e6xxx_chip *chip, int port,
