@@ -2239,11 +2239,11 @@ dsa_user_dcbnl_set_default_prio(struct net_device *dev, struct dcb_app *app)
 	return 0;
 }
 
-/* Update the DSCP prio entries on all user ports of the switch in case
- * the switch supports global DSCP prio instead of per port DSCP prios.
+/* Update the APP entries on all user ports of the switch in case
+ * the switch supports global prio settings instead of per port prios.
  */
-static int dsa_user_dcbnl_ieee_global_dscp_setdel(struct net_device *dev,
-						  struct dcb_app *app, bool del)
+static int dsa_user_dcbnl_ieee_global_setdel(struct net_device *dev,
+					     struct dcb_app *app, bool del)
 {
 	int (*setdel)(struct net_device *dev, struct dcb_app *app);
 	struct dsa_port *dp = dsa_user_to_port(dev);
@@ -2285,7 +2285,7 @@ err_try_to_restore:
 
 		restore_err = setdel(user, app);
 		if (restore_err)
-			netdev_err(user, "Failed to restore DSCP prio entry configuration\n");
+			netdev_err(user, "Failed to restore APP entry configuration\n");
 	}
 
 	return err;
@@ -2325,10 +2325,58 @@ dsa_user_dcbnl_add_dscp_prio(struct net_device *dev, struct dcb_app *app)
 	if (!ds->dscp_prio_mapping_is_global)
 		return 0;
 
-	err = dsa_user_dcbnl_ieee_global_dscp_setdel(dev, app, false);
+	err = dsa_user_dcbnl_ieee_global_setdel(dev, app, false);
 	if (err) {
 		if (ds->ops->port_del_dscp_prio)
 			ds->ops->port_del_dscp_prio(ds, port, dscp, new_prio);
+		dcb_ieee_delapp(dev, app);
+		return err;
+	}
+
+	return 0;
+}
+
+static int __maybe_unused
+dsa_user_dcbnl_add_pcp_prio(struct net_device *dev, struct dcb_app *app)
+{
+	struct dsa_port *dp = dsa_user_to_port(dev);
+	struct dsa_switch *ds = dp->ds;
+	unsigned long mask, new_prio;
+	int err, port = dp->index;
+	u8 pcp = app->protocol;
+
+	if (!ds->ops->port_add_pcp_prio)
+		return -EOPNOTSUPP;
+
+	if (app->priority >= IEEE_8021QAZ_MAX_TCS)
+		return -EINVAL;
+
+	if (pcp >= 16) {
+		netdev_err(dev, "PCP APP entry with protocol value %u is invalid\n",
+			   pcp);
+		return -EINVAL;
+	}
+
+	err = dcb_ieee_setapp(dev, app);
+	if (err)
+		return err;
+
+	mask = dcb_ieee_getapp_mask(dev, app);
+	new_prio = __fls(mask);
+
+	err = ds->ops->port_add_pcp_prio(ds, port, pcp, new_prio);
+	if (err) {
+		dcb_ieee_delapp(dev, app);
+		return err;
+	}
+
+	if (!ds->pcp_prio_mapping_is_global)
+		return 0;
+
+	err = dsa_user_dcbnl_ieee_global_setdel(dev, app, false);
+	if (err) {
+		if (ds->ops->port_del_pcp_prio)
+			ds->ops->port_del_pcp_prio(ds, port, pcp, new_prio);
 		dcb_ieee_delapp(dev, app);
 		return err;
 	}
@@ -2350,6 +2398,8 @@ static int __maybe_unused dsa_user_dcbnl_ieee_setapp(struct net_device *dev,
 		break;
 	case IEEE_8021QAZ_APP_SEL_DSCP:
 		return dsa_user_dcbnl_add_dscp_prio(dev, app);
+	case DCB_APP_SEL_PCP:
+		return dsa_user_dcbnl_add_pcp_prio(dev, app);
 	default:
 		return -EOPNOTSUPP;
 	}
@@ -2406,11 +2456,47 @@ dsa_user_dcbnl_del_dscp_prio(struct net_device *dev, struct dcb_app *app)
 	if (!ds->dscp_prio_mapping_is_global)
 		return 0;
 
-	err = dsa_user_dcbnl_ieee_global_dscp_setdel(dev, app, true);
+	err = dsa_user_dcbnl_ieee_global_setdel(dev, app, true);
 	if (err) {
 		if (ds->ops->port_add_dscp_prio)
 			ds->ops->port_add_dscp_prio(ds, port, dscp,
 						    app->priority);
+		dcb_ieee_setapp(dev, app);
+		return err;
+	}
+
+	return 0;
+}
+
+static int __maybe_unused
+dsa_user_dcbnl_del_pcp_prio(struct net_device *dev, struct dcb_app *app)
+{
+	struct dsa_port *dp = dsa_user_to_port(dev);
+	struct dsa_switch *ds = dp->ds;
+	int err, port = dp->index;
+	u8 pcp = app->protocol;
+
+	if (!ds->ops->port_del_pcp_prio)
+		return -EOPNOTSUPP;
+
+	err = dcb_ieee_delapp(dev, app);
+	if (err)
+		return err;
+
+	err = ds->ops->port_del_pcp_prio(ds, port, pcp, app->priority);
+	if (err) {
+		dcb_ieee_setapp(dev, app);
+		return err;
+	}
+
+	if (!ds->pcp_prio_mapping_is_global)
+		return 0;
+
+	err = dsa_user_dcbnl_ieee_global_setdel(dev, app, true);
+	if (err) {
+		if (ds->ops->port_add_pcp_prio)
+			ds->ops->port_add_pcp_prio(ds, port, pcp,
+						   app->priority);
 		dcb_ieee_setapp(dev, app);
 		return err;
 	}
@@ -2432,6 +2518,8 @@ static int __maybe_unused dsa_user_dcbnl_ieee_delapp(struct net_device *dev,
 		break;
 	case IEEE_8021QAZ_APP_SEL_DSCP:
 		return dsa_user_dcbnl_del_dscp_prio(dev, app);
+	case DCB_APP_SEL_PCP:
+		return dsa_user_dcbnl_del_pcp_prio(dev, app);
 	default:
 		return -EOPNOTSUPP;
 	}
@@ -2474,6 +2562,30 @@ static int dsa_user_dcbnl_init(struct net_device *dev)
 			int prio;
 
 			prio = ds->ops->port_get_dscp_prio(ds, port, protocol);
+			if (prio == -EOPNOTSUPP)
+				continue;
+			if (prio < 0)
+				return prio;
+
+			app.priority = prio;
+
+			err = dcb_ieee_setapp(dev, &app);
+			if (err)
+				return err;
+		}
+	}
+
+	if (ds->ops->port_get_pcp_prio) {
+		int protocol;
+
+		for (protocol = 0; protocol < 16; protocol++) {
+			struct dcb_app app = {
+				.selector = DCB_APP_SEL_PCP,
+				.protocol = protocol,
+			};
+			int prio;
+
+			prio = ds->ops->port_get_pcp_prio(ds, port, protocol);
 			if (prio == -EOPNOTSUPP)
 				continue;
 			if (prio < 0)
