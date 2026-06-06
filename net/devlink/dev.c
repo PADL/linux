@@ -293,10 +293,12 @@ void devlink_notify_register(struct devlink *devlink)
 	devlink_rates_notify_register(devlink);
 	devlink_regions_notify_register(devlink);
 	devlink_params_notify_register(devlink);
+	devlink_port_params_notify_register(devlink);
 }
 
 void devlink_notify_unregister(struct devlink *devlink)
 {
+	devlink_port_params_notify_unregister(devlink);
 	devlink_params_notify_unregister(devlink);
 	devlink_regions_notify_unregister(devlink);
 	devlink_rates_notify_unregister(devlink);
