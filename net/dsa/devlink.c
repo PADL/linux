@@ -222,6 +222,55 @@ void dsa_devlink_params_unregister(struct dsa_switch *ds,
 }
 EXPORT_SYMBOL_GPL(dsa_devlink_params_unregister);
 
+int dsa_devlink_port_param_get(struct devlink *dl, u32 id,
+			       struct devlink_param_gset_ctx *ctx)
+{
+	struct dsa_switch *ds = dsa_devlink_port_to_ds(ctx->port);
+	int port = dsa_devlink_port_to_port(ctx->port);
+
+	if (!ds->ops->devlink_port_param_get)
+		return -EOPNOTSUPP;
+
+	return ds->ops->devlink_port_param_get(ds, port, id, ctx);
+}
+EXPORT_SYMBOL_GPL(dsa_devlink_port_param_get);
+
+int dsa_devlink_port_param_set(struct devlink *dl, u32 id,
+			       struct devlink_param_gset_ctx *ctx,
+			       struct netlink_ext_ack *extack)
+{
+	struct dsa_switch *ds = dsa_devlink_port_to_ds(ctx->port);
+	int port = dsa_devlink_port_to_port(ctx->port);
+
+	if (!ds->ops->devlink_port_param_set)
+		return -EOPNOTSUPP;
+
+	return ds->ops->devlink_port_param_set(ds, port, id, ctx);
+}
+EXPORT_SYMBOL_GPL(dsa_devlink_port_param_set);
+
+int dsa_devlink_port_params_register(struct dsa_switch *ds, int port,
+				     const struct devlink_param *params,
+				     size_t params_count)
+{
+	struct dsa_port *dp = dsa_to_port(ds, port);
+
+	return devlink_port_params_register(&dp->devlink_port, params,
+					    params_count);
+}
+EXPORT_SYMBOL_GPL(dsa_devlink_port_params_register);
+
+void dsa_devlink_port_params_unregister(struct dsa_switch *ds, int port,
+					const struct devlink_param *params,
+					size_t params_count)
+{
+	struct dsa_port *dp = dsa_to_port(ds, port);
+
+	devlink_port_params_unregister(&dp->devlink_port, params,
+				       params_count);
+}
+EXPORT_SYMBOL_GPL(dsa_devlink_port_params_unregister);
+
 int dsa_devlink_resource_register(struct dsa_switch *ds,
 				  const char *resource_name,
 				  u64 resource_size,
