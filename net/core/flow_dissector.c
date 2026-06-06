@@ -291,8 +291,10 @@ void skb_flow_dissect_meta(const struct sk_buff *skb,
 		struct tc_skb_ext *ext;
 
 		ext = skb_ext_find(skb, TC_SKB_EXT);
-		if (ext)
+		if (ext) {
 			meta->l2_miss = ext->l2_miss;
+			meta->dynamic_reservation_hit = ext->dynamic_reservation_hit;
+		}
 	}
 #endif
 }
