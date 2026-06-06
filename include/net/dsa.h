@@ -1167,6 +1167,12 @@ struct dsa_switch_ops {
 				     struct devlink_param_gset_ctx *ctx);
 	int	(*devlink_param_set)(struct dsa_switch *ds, u32 id,
 				     struct devlink_param_gset_ctx *ctx);
+	int	(*devlink_port_param_get)(struct dsa_switch *ds, int port,
+					  u32 id,
+					  struct devlink_param_gset_ctx *ctx);
+	int	(*devlink_port_param_set)(struct dsa_switch *ds, int port,
+					  u32 id,
+					  struct devlink_param_gset_ctx *ctx);
 	int	(*devlink_info_get)(struct dsa_switch *ds,
 				    struct devlink_info_req *req,
 				    struct netlink_ext_ack *extack);
@@ -1266,18 +1272,34 @@ struct dsa_switch_ops {
 	DEVLINK_PARAM_DRIVER(_id, _name, _type, _cmodes,		\
 			     dsa_devlink_param_get, dsa_devlink_param_set, NULL)
 
+#define DSA_DEVLINK_PORT_PARAM_DRIVER(_id, _name, _type, _cmodes)	\
+	DEVLINK_PARAM_DRIVER(_id, _name, _type, _cmodes,		\
+			     dsa_devlink_port_param_get,		\
+			     dsa_devlink_port_param_set, NULL)
+
 int dsa_devlink_param_get(struct devlink *dl, u32 id,
 			  struct devlink_param_gset_ctx *ctx,
 			  struct netlink_ext_ack *extack);
 int dsa_devlink_param_set(struct devlink *dl, u32 id,
 			  struct devlink_param_gset_ctx *ctx,
 			  struct netlink_ext_ack *extack);
+int dsa_devlink_port_param_get(struct devlink *dl, u32 id,
+			       struct devlink_param_gset_ctx *ctx);
+int dsa_devlink_port_param_set(struct devlink *dl, u32 id,
+			       struct devlink_param_gset_ctx *ctx,
+			       struct netlink_ext_ack *extack);
 int dsa_devlink_params_register(struct dsa_switch *ds,
 				const struct devlink_param *params,
 				size_t params_count);
 void dsa_devlink_params_unregister(struct dsa_switch *ds,
 				   const struct devlink_param *params,
 				   size_t params_count);
+int dsa_devlink_port_params_register(struct dsa_switch *ds, int port,
+				     const struct devlink_param *params,
+				     size_t params_count);
+void dsa_devlink_port_params_unregister(struct dsa_switch *ds, int port,
+					const struct devlink_param *params,
+					size_t params_count);
 int dsa_devlink_resource_register(struct dsa_switch *ds,
 				  const char *resource_name,
 				  u64 resource_size,
