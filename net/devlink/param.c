@@ -344,6 +344,11 @@ static int devlink_nl_param_fill(struct sk_buff *msg, struct devlink *devlink,
 		return -ENOMEM;
 	}
 
+	if (cmd == DEVLINK_CMD_PORT_PARAM_GET ||
+	    cmd == DEVLINK_CMD_PORT_PARAM_NEW ||
+	    cmd == DEVLINK_CMD_PORT_PARAM_DEL)
+		ctx->port = devlink_port_get_by_index(devlink, port_index);
+
 	/* Get value from driver part to driverinit configuration mode */
 	for (i = 0; i <= DEVLINK_PARAM_CMODE_MAX; i++) {
 		if (!devlink_param_cmode_is_supported(param, i))
@@ -712,6 +717,9 @@ static int __devlink_nl_cmd_param_set_doit(struct devlink *devlink,
 			return -EOPNOTSUPP;
 		ctx.val = value;
 		ctx.cmode = cmode;
+		ctx.port = NULL;
+		if (cmd == DEVLINK_CMD_PORT_PARAM_NEW)
+			ctx.port = devlink_port_get_by_index(devlink, port_index);
 		if (reset_default)
 			err = devlink_param_reset_default(devlink, param, cmode,
 							  info->extack);
@@ -734,25 +742,86 @@ int devlink_nl_param_set_doit(struct sk_buff *skb, struct genl_info *info)
 					       info, DEVLINK_CMD_PARAM_NEW);
 }
 
-int devlink_nl_port_param_get_dumpit(struct sk_buff *msg,
+static int devlink_nl_port_param_get_dump_one(struct sk_buff *msg,
+					      struct devlink *devlink,
+					      struct netlink_callback *cb,
+					      int flags)
+{
+	struct devlink_nl_dump_state *state = devlink_dump_state(cb);
+	struct devlink_param_item *param_item;
+	struct devlink_port *devlink_port;
+	unsigned long port_index, param_id;
+	int idx = 0;
+	int err = 0;
+
+	xa_for_each(&devlink->ports, port_index, devlink_port) {
+		xa_for_each(&devlink_port->params, param_id, param_item) {
+			if (idx < state->idx) {
+				idx++;
+				continue;
+			}
+			err = devlink_nl_param_fill(msg, devlink,
+						    devlink_port->index,
+						    param_item,
+						    DEVLINK_CMD_PORT_PARAM_GET,
+						    NETLINK_CB(cb->skb).portid,
+						    cb->nlh->nlmsg_seq, flags);
+			if (err == -EOPNOTSUPP) {
+				err = 0;
+			} else if (err) {
+				state->idx = idx;
+				return err;
+			}
+			idx++;
+		}
+	}
+
+	return err;
+}
+
+int devlink_nl_port_param_get_dumpit(struct sk_buff *skb,
 				     struct netlink_callback *cb)
 {
-	NL_SET_ERR_MSG(cb->extack, "Port params are not supported");
-	return msg->len;
+	return devlink_nl_dumpit(skb, cb, devlink_nl_port_param_get_dump_one);
 }
 
 int devlink_nl_port_param_get_doit(struct sk_buff *skb,
 				   struct genl_info *info)
 {
-	NL_SET_ERR_MSG(info->extack, "Port params are not supported");
-	return -EINVAL;
+	struct devlink_port *devlink_port = info->user_ptr[1];
+	struct devlink *devlink = devlink_port->devlink;
+	struct devlink_param_item *param_item;
+	struct sk_buff *msg;
+	int err;
+
+	param_item = devlink_param_get_from_info(&devlink_port->params, info);
+	if (!param_item)
+		return -EINVAL;
+
+	msg = nlmsg_new(NLMSG_DEFAULT_SIZE, GFP_KERNEL);
+	if (!msg)
+		return -ENOMEM;
+
+	err = devlink_nl_param_fill(msg, devlink, devlink_port->index,
+				    param_item, DEVLINK_CMD_PORT_PARAM_GET,
+				    info->snd_portid, info->snd_seq, 0);
+	if (err) {
+		nlmsg_free(msg);
+		return err;
+	}
+
+	return genlmsg_reply(msg, info);
 }
 
 int devlink_nl_port_param_set_doit(struct sk_buff *skb,
 				   struct genl_info *info)
 {
-	NL_SET_ERR_MSG(info->extack, "Port params are not supported");
-	return -EINVAL;
+	struct devlink_port *devlink_port = info->user_ptr[1];
+
+	return __devlink_nl_cmd_param_set_doit(devlink_port->devlink,
+					       devlink_port->index,
+					       &devlink_port->params, info,
+					       DEVLINK_CMD_PORT_PARAM_NEW);
 }
 
 static int devlink_param_verify(const struct devlink_param *param)
@@ -887,6 +956,161 @@ void devlink_params_unregister(struct devlink *devlink,
 	devl_unlock(devlink);
 }
 EXPORT_SYMBOL_GPL(devlink_params_unregister);
+
+static int devlink_port_param_register(struct devlink_port *devlink_port,
+				       const struct devlink_param *param)
+{
+	struct devlink *devlink = devlink_port->devlink;
+	struct devlink_param_item *param_item;
+	int err;
+
+	WARN_ON(devlink_param_verify(param));
+	WARN_ON(devlink_param_find_by_name(&devlink_port->params, param->name));
+
+	if (param->supported_cmodes == BIT(DEVLINK_PARAM_CMODE_DRIVERINIT))
+		WARN_ON(param->get || param->set);
+	else
+		WARN_ON(!param->get || !param->set);
+
+	param_item = kzalloc_obj(*param_item, GFP_KERNEL);
+	if (!param_item)
+		return -ENOMEM;
+
+	param_item->param = param;
+
+	err = xa_insert(&devlink_port->params, param->id, param_item,
+			GFP_KERNEL);
+	if (err)
+		goto err_xa_insert;
+
+	devlink_param_notify(devlink, devlink_port->index, param_item,
+			     DEVLINK_CMD_PORT_PARAM_NEW);
+	return 0;
+
+err_xa_insert:
+	kfree(param_item);
+	return err;
+}
+
+static void devlink_port_param_unregister(struct devlink_port *devlink_port,
+					  const struct devlink_param *param)
+{
+	struct devlink *devlink = devlink_port->devlink;
+	struct devlink_param_item *param_item;
+
+	param_item = devlink_param_find_by_id(&devlink_port->params, param->id);
+	if (WARN_ON(!param_item))
+		return;
+	devlink_param_notify(devlink, devlink_port->index, param_item,
+			     DEVLINK_CMD_PORT_PARAM_DEL);
+	xa_erase(&devlink_port->params, param->id);
+	kfree(param_item);
+}
+
+/**
+ *	devl_port_params_register - register port configuration parameters
+ *
+ *	@devlink_port: devlink port
+ *	@params: configuration parameters array
+ *	@params_count: number of parameters provided
+ *
+ *	Register the configuration parameters supported by the port.
+ */
+int devl_port_params_register(struct devlink_port *devlink_port,
+			      const struct devlink_param *params,
+			      size_t params_count)
+{
+	const struct devlink_param *param = params;
+	int i, err;
+
+	lockdep_assert_held(&devlink_port->devlink->lock);
+
+	for (i = 0; i < params_count; i++, param++) {
+		err = devlink_port_param_register(devlink_port, param);
+		if (err)
+			goto rollback;
+	}
+	return 0;
+
+rollback:
+	if (!i)
+		return err;
+
+	for (param--; i > 0; i--, param--)
+		devlink_port_param_unregister(devlink_port, param);
+	return err;
+}
+EXPORT_SYMBOL_GPL(devl_port_params_register);
+
+int devlink_port_params_register(struct devlink_port *devlink_port,
+				 const struct devlink_param *params,
+				 size_t params_count)
+{
+	struct devlink *devlink = devlink_port->devlink;
+	int err;
+
+	devl_lock(devlink);
+	err = devl_port_params_register(devlink_port, params, params_count);
+	devl_unlock(devlink);
+	return err;
+}
+EXPORT_SYMBOL_GPL(devlink_port_params_register);
+
+/**
+ *	devl_port_params_unregister - unregister port configuration parameters
+ *
+ *	@devlink_port: devlink port
+ *	@params: configuration parameters array
+ *	@params_count: number of parameters provided
+ */
+void devl_port_params_unregister(struct devlink_port *devlink_port,
+				 const struct devlink_param *params,
+				 size_t params_count)
+{
+	const struct devlink_param *param = params;
+	int i;
+
+	lockdep_assert_held(&devlink_port->devlink->lock);
+
+	for (i = 0; i < params_count; i++, param++)
+		devlink_port_param_unregister(devlink_port, param);
+}
+EXPORT_SYMBOL_GPL(devl_port_params_unregister);
+
+void devlink_port_params_unregister(struct devlink_port *devlink_port,
+				    const struct devlink_param *params,
+				    size_t params_count)
+{
+	struct devlink *devlink = devlink_port->devlink;
+
+	devl_lock(devlink);
+	devl_port_params_unregister(devlink_port, params, params_count);
+	devl_unlock(devlink);
+}
+EXPORT_SYMBOL_GPL(devlink_port_params_unregister);
+
+static void devlink_port_params_notify(struct devlink *devlink,
+				       enum devlink_command cmd)
+{
+	struct devlink_param_item *param_item;
+	struct devlink_port *devlink_port;
+	unsigned long port_index, param_id;
+
+	xa_for_each(&devlink->ports, port_index, devlink_port)
+		xa_for_each(&devlink_port->params, param_id, param_item)
+			devlink_param_notify(devlink, devlink_port->index,
+					     param_item, cmd);
+}
+
+void devlink_port_params_notify_register(struct devlink *devlink)
+{
+	devlink_port_params_notify(devlink, DEVLINK_CMD_PORT_PARAM_NEW);
+}
+
+void devlink_port_params_notify_unregister(struct devlink *devlink)
+{
+	devlink_port_params_notify(devlink, DEVLINK_CMD_PORT_PARAM_DEL);
+}
 
 /**
  *	devl_param_driverinit_value_get - get configuration parameter

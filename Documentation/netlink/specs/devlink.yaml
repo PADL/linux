@@ -1985,9 +1985,13 @@ operations:
         pre: devlink-nl-pre-doit-port
         post: devlink-nl-post-doit
         request:
-          attributes: *port-id-attrs
+          attributes: &port-param-id-attrs
+            - bus-name
+            - dev-name
+            - port-index
+            - param-name
         reply:
-          attributes: *port-id-attrs
+          attributes: *port-param-id-attrs
       dump:
         reply:
           attributes: *port-id-attrs
@@ -2002,7 +2006,13 @@ operations:
         pre: devlink-nl-pre-doit-port
         post: devlink-nl-post-doit
         request:
-          attributes: *port-id-attrs
+          attributes:
+            - bus-name
+            - dev-name
+            - port-index
+            - param-name
+            - param-type
+            - param-value-cmode
 
     -
       name: info-get

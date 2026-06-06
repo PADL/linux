@@ -296,6 +296,8 @@ void devlink_ports_notify_register(struct devlink *devlink);
 void devlink_ports_notify_unregister(struct devlink *devlink);
 void devlink_params_notify_register(struct devlink *devlink);
 void devlink_params_notify_unregister(struct devlink *devlink);
+void devlink_port_params_notify_register(struct devlink *devlink);
+void devlink_port_params_notify_unregister(struct devlink *devlink);
 void devlink_regions_notify_register(struct devlink *devlink);
 void devlink_regions_notify_unregister(struct devlink *devlink);
 void devlink_trap_policers_notify_register(struct devlink *devlink);

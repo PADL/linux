@@ -1026,6 +1026,7 @@ void devlink_port_init(struct devlink *devlink,
 	devlink_port->devlink = devlink;
 	INIT_LIST_HEAD(&devlink_port->region_list);
 	INIT_LIST_HEAD(&devlink_port->resource_list);
+	xa_init_flags(&devlink_port->params, XA_FLAGS_ALLOC);
 	devlink_port->initialized = true;
 }
 EXPORT_SYMBOL_GPL(devlink_port_init);
@@ -1044,6 +1045,8 @@ void devlink_port_fini(struct devlink_port *devlink_port)
 {
 	WARN_ON(!list_empty(&devlink_port->region_list));
 	WARN_ON(!list_empty(&devlink_port->resource_list));
+	WARN_ON(!xa_empty(&devlink_port->params));
+	xa_destroy(&devlink_port->params);
 }
 EXPORT_SYMBOL_GPL(devlink_port_fini);
 

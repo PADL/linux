@@ -159,6 +159,7 @@ struct devlink_port {
 	struct devlink_rate *devlink_rate;
 	struct devlink_linecard *linecard;
 	u32 rel_index;
+	struct xarray params;
 };
 
 struct devlink_port_new_attrs {
@@ -455,6 +456,10 @@ union devlink_param_value {
 struct devlink_param_gset_ctx {
 	union devlink_param_value val;
 	enum devlink_param_cmode cmode;
+	/* For port parameters, the port the get/set targets; NULL for
+	 * device-wide parameters.
+	 */
+	struct devlink_port *port;
 };
 
 /**
@@ -1937,6 +1942,18 @@ void devl_params_unregister(struct devlink *devlink,
 void devlink_params_unregister(struct devlink *devlink,
 			       const struct devlink_param *params,
 			       size_t params_count);
+int devl_port_params_register(struct devlink_port *devlink_port,
+			      const struct devlink_param *params,
+			      size_t params_count);
+int devlink_port_params_register(struct devlink_port *devlink_port,
+				 const struct devlink_param *params,
+				 size_t params_count);
+void devl_port_params_unregister(struct devlink_port *devlink_port,
+				 const struct devlink_param *params,
+				 size_t params_count);
+void devlink_port_params_unregister(struct devlink_port *devlink_port,
+				    const struct devlink_param *params,
+				    size_t params_count);
 int devl_param_driverinit_value_get(struct devlink *devlink, u32 param_id,
 				    union devlink_param_value *val);
 void devl_param_driverinit_value_set(struct devlink *devlink, u32 param_id,
