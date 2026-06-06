@@ -739,6 +739,7 @@ static const struct nla_policy fl_policy[TCA_FLOWER_MAX + 1] = {
 	[TCA_FLOWER_KEY_SPI]		= { .type = NLA_U32 },
 	[TCA_FLOWER_KEY_SPI_MASK]	= { .type = NLA_U32 },
 	[TCA_FLOWER_L2_MISS]		= NLA_POLICY_MAX(NLA_U8, 1),
+	[TCA_FLOWER_DYNAMIC_RESERVATION_HIT] = NLA_POLICY_MAX(NLA_U8, 1),
 	[TCA_FLOWER_KEY_CFM]		= { .type = NLA_NESTED },
 	[TCA_FLOWER_KEY_ENC_FLAGS]	= NLA_POLICY_MASK(NLA_BE32,
 							  TCA_FLOWER_KEY_ENC_FLAGS_POLICY_MASK),
@@ -1882,6 +1883,11 @@ static int fl_set_key(struct net *net, struct nlattr *tca_opts,
 		       &mask->meta.l2_miss, TCA_FLOWER_UNSPEC,
 		       sizeof(key->meta.l2_miss));
 
+	fl_set_key_val(tb, &key->meta.dynamic_reservation_hit,
+		       TCA_FLOWER_DYNAMIC_RESERVATION_HIT,
+		       &mask->meta.dynamic_reservation_hit, TCA_FLOWER_UNSPEC,
+		       sizeof(key->meta.dynamic_reservation_hit));
+
 	fl_set_key_val(tb, key->eth.dst, TCA_FLOWER_KEY_ETH_DST,
 		       mask->eth.dst, TCA_FLOWER_KEY_ETH_DST_MASK,
 		       sizeof(key->eth.dst));
@@ -2325,7 +2331,7 @@ errout_cleanup:
 
 static bool fl_needs_tc_skb_ext(const struct fl_flow_key *mask)
 {
-	return mask->meta.l2_miss;
+	return mask->meta.l2_miss || mask->meta.dynamic_reservation_hit;
 }
 
 static int fl_ht_insert_unique(struct cls_fl_filter *fnew,
@@ -3446,6 +3452,13 @@ static int fl_dump_key(struct sk_buff *skb, struct net *net,
 	if (fl_dump_key_val(skb, &key->meta.l2_miss,
 			    TCA_FLOWER_L2_MISS, &mask->meta.l2_miss,
 			    TCA_FLOWER_UNSPEC, sizeof(key->meta.l2_miss)))
+		goto nla_put_failure;
+
+	if (fl_dump_key_val(skb, &key->meta.dynamic_reservation_hit,
+			    TCA_FLOWER_DYNAMIC_RESERVATION_HIT,
+			    &mask->meta.dynamic_reservation_hit,
+			    TCA_FLOWER_UNSPEC,
+			    sizeof(key->meta.dynamic_reservation_hit)))
 		goto nla_put_failure;
 
 	if (fl_dump_key_val(skb, key->eth.dst, TCA_FLOWER_KEY_ETH_DST,

@@ -257,11 +257,13 @@ struct flow_dissector_key_ip {
  * @ingress_ifindex: ingress ifindex
  * @ingress_iftype: ingress interface type
  * @l2_miss: packet did not match an L2 entry during forwarding
+ * @dynamic_reservation_hit: packet hit a dynamic reservation (802.1Qat) MDB entry
  */
 struct flow_dissector_key_meta {
 	int ingress_ifindex;
 	u16 ingress_iftype;
 	u8 l2_miss;
+	u8 dynamic_reservation_hit;
 };
 
 /**
