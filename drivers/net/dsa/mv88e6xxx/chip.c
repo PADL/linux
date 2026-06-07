@@ -4158,6 +4158,14 @@ static int mv88e6xxx_setup(struct dsa_switch *ds)
 	if (err)
 		goto unlock;
 
+	/* Not for upstream: reclaim the unused AVB Class B queue for legacy
+	 * (Dante) traffic (6352 only).  The reset IP map already classifies the
+	 * Dante DSCPs, so only the Legacy QPri remap is configured here.
+	 */
+	err = mv88e6352_dante_qos_setup(chip);
+	if (err)
+		goto unlock;
+
 	/* Setup PTP Hardware Clock and timestamping */
 	if (chip->info->ptp_support) {
 		err = mv88e6xxx_ptp_setup(chip);

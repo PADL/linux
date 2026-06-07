@@ -199,3 +199,26 @@ int mv88e6xxx_avb_disable(struct mv88e6xxx_chip *chip)
 	return mv88e6xxx_qav_set_iso_ptr(chip, 0);
 }
 
+/* Not for upstream: AVB/Dante queue coexistence on the 6352.
+ *
+ * The IP Mapping Table already classifies the Dante DSCPs usefully at reset
+ * (CS7 clock -> Q3, EF media -> Q2), with FPris clear of the SR-class FPris,
+ * and DSCP is trusted on every port -- so no DSCP programming is needed.
+ *
+ * All that remains is to push legacy (Dante) traffic down off the AVB queues
+ * while preserving its order.  The Legacy register remaps by the originally
+ * assigned QPri: a frame on Class A's queue (Q3 = AvbHiQPri) -> Q2
+ * (LegacyHiQPri), and one on the unused Class B queue (Q2 = AvbLoQPri) -> Q1
+ * (LegacyLoQPri).  So under AVB the Dante clock (defaults to Q3) lands in Q2
+ * and media (Q2) in Q1 -- kept distinct, and both below AVB Class A in Q3.
+ * The remap acts only on ports in AVB mode, so this is inert until mqprio
+ * enables AVB.  Assumes a single remap pass (clock moved to Q2 is not then
+ * re-remapped by the Lo rule).  The register shares the 0x00 field layout, so
+ * reuse those accessors.
+ */
+int mv88e6352_dante_qos_setup(struct mv88e6xxx_chip *chip)
+{
+	return mv88e6xxx_avb_write(chip, MV88E6XXX_AVB_CFG_LEGACY,
+				   MV88E6XXX_AVB_CFG_AVB_HI_QPRI_SET(2) |
+				   MV88E6XXX_AVB_CFG_AVB_LO_QPRI_SET(1));
+}
