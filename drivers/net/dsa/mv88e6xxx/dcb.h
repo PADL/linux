@@ -18,4 +18,10 @@ int mv88e6xxx_port_add_pcp_prio(struct dsa_switch *ds, int port, u8 pcp,
 int mv88e6xxx_port_del_pcp_prio(struct dsa_switch *ds, int port, u8 pcp,
 				u8 prio);
 
+int mv88e6xxx_port_get_dscp_prio(struct dsa_switch *ds, int port, u8 dscp);
+int mv88e6xxx_port_add_dscp_prio(struct dsa_switch *ds, int port, u8 dscp,
+				 u8 prio);
+int mv88e6xxx_port_del_dscp_prio(struct dsa_switch *ds, int port, u8 dscp,
+				 u8 prio);
+
 #endif /* _MV88E6XXX_DCB_H_ */

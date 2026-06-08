@@ -795,6 +795,20 @@ struct mv88e6xxx_dcb_ops {
 				 u8 pcp);
 	int (*port_set_pcp_prio)(struct mv88e6xxx_chip *chip, int port,
 				 u8 pcp, u8 prio);
+
+	/* Get/set the chip's global DSCP to queue priority (QPri) mapping */
+	int (*global_get_dscp_prio)(struct mv88e6xxx_chip *chip, u8 dscp);
+	int (*global_set_dscp_prio)(struct mv88e6xxx_chip *chip, u8 dscp,
+				    u8 prio);
+	int (*global_del_dscp_prio)(struct mv88e6xxx_chip *chip, u8 dscp);
+
+	/* Get/set a port's DSCP to queue priority (QPri) mapping */
+	int (*port_get_dscp_prio)(struct mv88e6xxx_chip *chip, int port,
+				  u8 dscp);
+	int (*port_set_dscp_prio)(struct mv88e6xxx_chip *chip, int port,
+				  u8 dscp, u8 prio);
+	int (*port_del_dscp_prio)(struct mv88e6xxx_chip *chip, int port,
+				  u8 dscp);
 };
 
 struct mv88e6xxx_ptp_ops {
