@@ -24,4 +24,9 @@ int mv88e6xxx_port_add_dscp_prio(struct dsa_switch *ds, int port, u8 dscp,
 int mv88e6xxx_port_del_dscp_prio(struct dsa_switch *ds, int port, u8 dscp,
 				 u8 prio);
 
+int mv88e6xxx_port_get_apptrust(struct dsa_switch *ds, int port, u8 *sel,
+				int *nsel);
+int mv88e6xxx_port_set_apptrust(struct dsa_switch *ds, int port, const u8 *sel,
+				int nsel);
+
 #endif /* _MV88E6XXX_DCB_H_ */
