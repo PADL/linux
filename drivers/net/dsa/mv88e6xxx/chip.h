@@ -809,6 +809,12 @@ struct mv88e6xxx_dcb_ops {
 				  u8 dscp, u8 prio);
 	int (*port_del_dscp_prio)(struct mv88e6xxx_chip *chip, int port,
 				  u8 dscp);
+
+	/* Get/set a port's trusted application priority sources */
+	int (*port_get_apptrust)(struct mv88e6xxx_chip *chip, int port,
+				 u8 *sel, int *nsel);
+	int (*port_set_apptrust)(struct mv88e6xxx_chip *chip, int port,
+				 const u8 *sel, int nsel);
 };
 
 struct mv88e6xxx_ptp_ops {
