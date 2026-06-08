@@ -307,12 +307,86 @@ static int mv88e6390_port_del_dscp_prio(struct mv88e6xxx_chip *chip, int port,
 					      dscp));
 }
 
+/* Application trust (apptrust).
+ *
+ * InitialPri (the UseTag/UseIP bits) selects which ingress values a port
+ * trusts for priority assignment; TagIfBoth breaks the tie when a frame
+ * matches both.  DCB lists selectors in increasing precedence, so the
+ * last-named selector is the most trusted.
+ */
+
+static int mv88e6xxx_set_apptrust(struct mv88e6xxx_chip *chip, int port,
+				  const u8 *sel, int nsel)
+{
+	bool use_tag = false, use_ip = false, tag_wins = false;
+	u16 reg;
+	int i, err;
+
+	for (i = 0; i < nsel; i++) {
+		switch (sel[i]) {
+		case DCB_APP_SEL_PCP:
+			use_tag = true;
+			tag_wins = true;
+			break;
+		case IEEE_8021QAZ_APP_SEL_DSCP:
+			use_ip = true;
+			tag_wins = false;
+			break;
+		default:
+			return -EOPNOTSUPP;
+		}
+	}
+
+	err = mv88e6xxx_port_read(chip, port, MV88E6XXX_PORT_CTL0, &reg);
+	if (err)
+		return err;
+
+	reg &= ~(MV88E6185_PORT_CTL0_USE_TAG | MV88E6185_PORT_CTL0_USE_IP |
+		 MV88E6XXX_PORT_CTL0_TAG_IF_BOTH);
+	if (use_tag)
+		reg |= MV88E6185_PORT_CTL0_USE_TAG;
+	if (use_ip)
+		reg |= MV88E6185_PORT_CTL0_USE_IP;
+	if (use_tag && use_ip && tag_wins)
+		reg |= MV88E6XXX_PORT_CTL0_TAG_IF_BOTH;
+
+	return mv88e6xxx_port_write(chip, port, MV88E6XXX_PORT_CTL0, reg);
+}
+
+static int mv88e6xxx_get_apptrust(struct mv88e6xxx_chip *chip, int port,
+				  u8 *sel, int *nsel)
+{
+	bool tag_wins;
+	u16 reg;
+	int err, n = 0;
+
+	err = mv88e6xxx_port_read(chip, port, MV88E6XXX_PORT_CTL0, &reg);
+	if (err)
+		return err;
+
+	/* Report in increasing precedence: the winner of TagIfBoth comes last */
+	tag_wins = reg & MV88E6XXX_PORT_CTL0_TAG_IF_BOTH;
+
+	if (!tag_wins && (reg & MV88E6185_PORT_CTL0_USE_TAG))
+		sel[n++] = DCB_APP_SEL_PCP;
+	if (reg & MV88E6185_PORT_CTL0_USE_IP)
+		sel[n++] = IEEE_8021QAZ_APP_SEL_DSCP;
+	if (tag_wins && (reg & MV88E6185_PORT_CTL0_USE_TAG))
+		sel[n++] = DCB_APP_SEL_PCP;
+
+	*nsel = n;
+
+	return 0;
+}
+
 const struct mv88e6xxx_dcb_ops mv88e6352_dcb_ops = {
 	.global_get_pcp_prio = mv88e6352_get_pcp_prio,
 	.global_set_pcp_prio = mv88e6352_set_pcp_prio,
 	.global_get_dscp_prio = mv88e6352_get_dscp_prio,
 	.global_set_dscp_prio = mv88e6352_set_dscp_prio,
 	.global_del_dscp_prio = mv88e6352_del_dscp_prio,
+	.port_get_apptrust = mv88e6xxx_get_apptrust,
+	.port_set_apptrust = mv88e6xxx_set_apptrust,
 };
 
 const struct mv88e6xxx_dcb_ops mv88e6390_dcb_ops = {
@@ -321,6 +395,8 @@ const struct mv88e6xxx_dcb_ops mv88e6390_dcb_ops = {
 	.port_get_dscp_prio = mv88e6390_port_get_dscp_prio,
 	.port_set_dscp_prio = mv88e6390_port_set_dscp_prio,
 	.port_del_dscp_prio = mv88e6390_port_del_dscp_prio,
+	.port_get_apptrust = mv88e6xxx_get_apptrust,
+	.port_set_apptrust = mv88e6xxx_set_apptrust,
 };
 
 const struct mv88e6xxx_dcb_ops mv88e6393x_dcb_ops = {
@@ -329,6 +405,8 @@ const struct mv88e6xxx_dcb_ops mv88e6393x_dcb_ops = {
 	.port_get_dscp_prio = mv88e6390_port_get_dscp_prio,
 	.port_set_dscp_prio = mv88e6390_port_set_dscp_prio,
 	.port_del_dscp_prio = mv88e6390_port_del_dscp_prio,
+	.port_get_apptrust = mv88e6xxx_get_apptrust,
+	.port_set_apptrust = mv88e6xxx_set_apptrust,
 };
 
 static int mv88e6xxx_dcb_get_pcp_prio(struct mv88e6xxx_chip *chip, int port,
@@ -515,5 +593,39 @@ int mv88e6xxx_port_del_dscp_prio(struct dsa_switch *ds, int port, u8 dscp,
 
 unlock:
 	mv88e6xxx_reg_unlock(chip);
+	return err;
+}
+
+int mv88e6xxx_port_get_apptrust(struct dsa_switch *ds, int port, u8 *sel,
+				int *nsel)
+{
+	struct mv88e6xxx_chip *chip = ds->priv;
+	const struct mv88e6xxx_dcb_ops *dcb_ops = chip->info->ops->dcb_ops;
+	int err;
+
+	if (!dcb_ops || !dcb_ops->port_get_apptrust)
+		return -EOPNOTSUPP;
+
+	mv88e6xxx_reg_lock(chip);
+	err = dcb_ops->port_get_apptrust(chip, port, sel, nsel);
+	mv88e6xxx_reg_unlock(chip);
+
+	return err;
+}
+
+int mv88e6xxx_port_set_apptrust(struct dsa_switch *ds, int port, const u8 *sel,
+				int nsel)
+{
+	struct mv88e6xxx_chip *chip = ds->priv;
+	const struct mv88e6xxx_dcb_ops *dcb_ops = chip->info->ops->dcb_ops;
+	int err;
+
+	if (!dcb_ops || !dcb_ops->port_set_apptrust)
+		return -EOPNOTSUPP;
+
+	mv88e6xxx_reg_lock(chip);
+	err = dcb_ops->port_set_apptrust(chip, port, sel, nsel);
+	mv88e6xxx_reg_unlock(chip);
+
 	return err;
 }
