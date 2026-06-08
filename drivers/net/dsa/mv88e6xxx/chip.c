@@ -7417,6 +7417,9 @@ static const struct dsa_switch_ops mv88e6xxx_switch_ops = {
 	.port_get_pcp_prio	= mv88e6xxx_port_get_pcp_prio,
 	.port_add_pcp_prio	= mv88e6xxx_port_add_pcp_prio,
 	.port_del_pcp_prio	= mv88e6xxx_port_del_pcp_prio,
+	.port_get_dscp_prio	= mv88e6xxx_port_get_dscp_prio,
+	.port_add_dscp_prio	= mv88e6xxx_port_add_dscp_prio,
+	.port_del_dscp_prio	= mv88e6xxx_port_del_dscp_prio,
 	.port_setup_tc		= mv88e6xxx_port_setup_tc,
 	.cls_flower_add		= mv88e6xxx_cls_flower_add,
 	.cls_flower_del         = mv88e6xxx_cls_flower_del,
@@ -7453,6 +7456,9 @@ static int mv88e6xxx_register_switch(struct mv88e6xxx_chip *chip)
 
 	ds->pcp_prio_mapping_is_global = dcb_ops &&
 					 dcb_ops->global_get_pcp_prio;
+
+	ds->dscp_prio_mapping_is_global = dcb_ops &&
+					  dcb_ops->global_get_dscp_prio;
 
 	/* Some chips support up to 32, but that requires enabling the
 	 * 5-bit port mode, which we do not support. 640k^W16 ought to
