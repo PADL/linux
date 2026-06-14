@@ -374,7 +374,7 @@ static int dsa_tag_connect(struct dsa_switch *ds)
 {
 	struct dsa_tagger_data *tagger_data;
 
-	tagger_data = kzalloc_obj(*tagger_data, GFP_KERNEL);
+	tagger_data = kzalloc(sizeof(*tagger_data), GFP_KERNEL);
 	if (!tagger_data)
 		return -ENOMEM;
 
