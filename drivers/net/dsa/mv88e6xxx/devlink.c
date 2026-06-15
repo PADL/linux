@@ -378,7 +378,7 @@ static int mv88e6xxx_region_atu_snapshot(struct devlink *dl,
 	struct mv88e6xxx_chip *chip = ds->priv;
 	int fid = -1, err = 0, count = 0;
 
-	table = kcalloc(mv88e6xxx_num_databases(chip),
+	table = kcalloc(mv88e6xxx_num_macs(chip),
 			sizeof(struct mv88e6xxx_devlink_atu_entry),
 			GFP_KERNEL);
 	if (!table)
@@ -778,7 +778,7 @@ int mv88e6xxx_setup_devlink_regions_global(struct dsa_switch *ds)
 
 		switch (i) {
 		case MV88E6XXX_REGION_ATU:
-			size = mv88e6xxx_num_databases(chip) *
+			size = mv88e6xxx_num_macs(chip) *
 				sizeof(struct mv88e6xxx_devlink_atu_entry);
 			break;
 		case MV88E6XXX_REGION_VTU:
