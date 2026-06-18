@@ -2544,6 +2544,13 @@ int mv88e6xxx_broadcast_setup(struct mv88e6xxx_chip *chip, u16 vid)
 	int port;
 	int err;
 
+	/* When broadcast is flooded via the global FloodBC bit, do not install
+	 * per-FID ff:ff ATU entries -- on the small 6341 ATU they pile into one
+	 * hash location (one MAC across every FID) and get evicted.
+	 */
+	if (chip->info->flood_bc)
+		return 0;
+
 	for (port = 0; port < mv88e6xxx_num_ports(chip); port++) {
 		struct dsa_port *dp = dsa_to_port(chip->ds, port);
 		struct net_device *brport;
@@ -2602,6 +2609,12 @@ static int mv88e6xxx_port_broadcast_sync(struct mv88e6xxx_chip *chip, int port,
 		.vid = 0,
 	};
 	int err;
+
+	/* Broadcast is flooded via the global FloodBC bit on these parts; no
+	 * per-FID ff:ff ATU entries to sync.
+	 */
+	if (chip->info->flood_bc)
+		return 0;
 
 	/* Update the port's private database... */
 	err = mv88e6xxx_port_broadcast_sync_vlan(chip, &vid0, &ctx);
@@ -4069,6 +4082,12 @@ static int mv88e6xxx_setup(struct dsa_switch *ds)
 	err = mv88e6xxx_atu_setup(chip);
 	if (err)
 		goto unlock;
+
+	if (chip->info->flood_bc) {
+		err = mv88e6xxx_g2_set_floodbc(chip, true);
+		if (err)
+			goto unlock;
+	}
 
 	err = mv88e6xxx_broadcast_setup(chip, 0);
 	if (err)
@@ -5945,6 +5964,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.name = "Marvell 88E6141",
 		.num_databases = 256,
 		.atu_fid_reg = true,
+		.flood_bc = true,
 		.num_macs = 2048,
 		.num_ports = 6,
 		.num_internal_phys = 5,
@@ -6468,6 +6488,7 @@ static const struct mv88e6xxx_info mv88e6xxx_table[] = {
 		.name = "Marvell 88E6341",
 		.num_databases = 256,
 		.atu_fid_reg = true,
+		.flood_bc = true,
 		.num_macs = 2048,
 		.num_internal_phys = 5,
 		.num_ports = 6,

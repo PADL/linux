@@ -55,6 +55,7 @@
 #define MV88E6XXX_G2_SWITCH_MGMT_USE_DOUBLE_TAG_DATA	0x8000
 #define MV88E6XXX_G2_SWITCH_MGMT_PREVENT_LOOPS		0x4000
 #define MV88E6XXX_G2_SWITCH_MGMT_FLOW_CTL_MSG		0x2000
+#define MV88E6XXX_G2_SWITCH_MGMT_FLOODBC		0x1000
 #define MV88E6XXX_G2_SWITCH_MGMT_FORCE_FLOW_CTL_PRI	0x0080
 #define MV88E6XXX_G2_SWITCH_MGMT_RSVD2CPU		0x0008
 
@@ -359,6 +360,7 @@ void mv88e6xxx_g2_irq_mdio_free(struct mv88e6xxx_chip *chip,
 
 int mv88e6185_g2_mgmt_rsvd2cpu(struct mv88e6xxx_chip *chip);
 int mv88e6352_g2_mgmt_rsvd2cpu(struct mv88e6xxx_chip *chip);
+int mv88e6xxx_g2_set_floodbc(struct mv88e6xxx_chip *chip, bool enable);
 
 int mv88e6xxx_g2_pot_clear(struct mv88e6xxx_chip *chip);
 

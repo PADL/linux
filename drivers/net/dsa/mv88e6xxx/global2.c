@@ -82,6 +82,28 @@ static int mv88e6xxx_g2_switch_mgmt_rsvd2cpu(struct mv88e6xxx_chip *chip,
 	return mv88e6xxx_g2_write(chip, MV88E6XXX_G2_SWITCH_MGMT, val);
 }
 
+/* Flood broadcast frames to all members of the frame's VLAN regardless of the
+ * per-port EgressFloods setting, without consuming an ATU entry. Used on parts
+ * (e.g. 88E6341) whose small ATU evicts the per-FID ff:ff broadcast entries
+ * under hash-collision pressure.
+ */
+int mv88e6xxx_g2_set_floodbc(struct mv88e6xxx_chip *chip, bool enable)
+{
+	u16 val;
+	int err;
+
+	err = mv88e6xxx_g2_read(chip, MV88E6XXX_G2_SWITCH_MGMT, &val);
+	if (err)
+		return err;
+
+	if (enable)
+		val |= MV88E6XXX_G2_SWITCH_MGMT_FLOODBC;
+	else
+		val &= ~MV88E6XXX_G2_SWITCH_MGMT_FLOODBC;
+
+	return mv88e6xxx_g2_write(chip, MV88E6XXX_G2_SWITCH_MGMT, val);
+}
+
 int mv88e6185_g2_mgmt_rsvd2cpu(struct mv88e6xxx_chip *chip)
 {
 	int err;

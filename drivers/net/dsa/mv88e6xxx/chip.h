@@ -182,6 +182,8 @@ struct mv88e6xxx_info {
 	 */
 	u8 atu_move_port_mask;
 
+	bool flood_bc;
+
 	const struct mv88e6xxx_ops *ops;
 
 	/* 802.1Qav credit based shaping */
