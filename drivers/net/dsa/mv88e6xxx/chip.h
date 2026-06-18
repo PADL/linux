@@ -180,6 +180,9 @@ struct mv88e6xxx_info {
 	/* Supports PTP */
 	bool ptp_support;
 
+	/* Has a dedicated ATU FID register. */
+	bool atu_fid_reg;
+
 	/* 802.1Qav credit based shaping */
 	const struct mv88e6xxx_qav_info *qav;
 
