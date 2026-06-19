@@ -50,6 +50,25 @@ int mv88e6xxx_devlink_param_get(struct dsa_switch *ds, u32 id,
 	return err;
 }
 
+/* Changing the ATU hash algorithm flushes the ATU, discarding all
+ * loaded entries. Only the default broadcast entries are replayed
+ * afterwards, so refuse the change unless every user port is
+ * administratively down and not offloading a bridge.
+ */
+static bool mv88e6xxx_atu_hash_is_mutable(struct mv88e6xxx_chip *chip)
+{
+	struct dsa_port *dp;
+
+	dsa_switch_for_each_user_port(dp, chip->ds) {
+		if (dsa_port_bridge_dev_get(dp))
+			return false;
+		if (dp->user && (dp->user->flags & IFF_UP))
+			return false;
+	}
+
+	return true;
+}
+
 int mv88e6xxx_devlink_param_set(struct dsa_switch *ds, u32 id,
 				struct devlink_param_gset_ctx *ctx)
 {
@@ -60,7 +79,17 @@ int mv88e6xxx_devlink_param_set(struct dsa_switch *ds, u32 id,
 
 	switch (id) {
 	case MV88E6XXX_DEVLINK_PARAM_ID_ATU_HASH:
+		if (!mv88e6xxx_atu_hash_is_mutable(chip)) {
+			err = -EBUSY;
+			break;
+		}
 		err = mv88e6xxx_atu_set_hash(chip, ctx->val.vu8);
+		if (err)
+			break;
+		err = mv88e6xxx_g1_atu_flush(chip, 0, true);
+		if (err)
+			break;
+		err = mv88e6xxx_broadcast_setup(chip, 0);
 		break;
 	default:
 		err = -EOPNOTSUPP;
