@@ -62,13 +62,26 @@ static void assert_reg_lock(struct mv88e6xxx_chip *chip)
 #endif
 }
 
+/* During DSA tree setup the conduit datapath may not be ready to carry inband
+ * (RMU) frames; an asynchronous G1/G2 threaded IRQ (e.g. a VTU violation) that
+ * issues an RMU request in that window can dereference a half-initialised
+ * conduit in the xmit path. Keep register access on MDIO until setup completes.
+ * RMU-only mode has no MDIO to fall back to, so it is left alone.
+ */
+static bool mv88e6xxx_rmu_defer_to_mdio(struct mv88e6xxx_chip *chip)
+{
+	return chip->rmu_state != MV88E6XXX_RMU_ONLY_ENABLED &&
+	       chip->ds && chip->ds->dst && !chip->ds->dst->setup;
+}
+
 int mv88e6xxx_read(struct mv88e6xxx_chip *chip, int addr, int reg, u16 *val)
 {
 	int err;
 
 	assert_reg_lock(chip);
 
-	err = mv88e6xxx_rmu_read(chip, addr, reg, val);
+	err = mv88e6xxx_rmu_defer_to_mdio(chip) ?
+		-EOPNOTSUPP : mv88e6xxx_rmu_read(chip, addr, reg, val);
 	if (mv88e6xxx_rmu_can_mdio_fallback(chip, err))
 		err = mv88e6xxx_smi_read(chip, addr, reg, val);
 	if (err)
@@ -86,7 +99,8 @@ int mv88e6xxx_write(struct mv88e6xxx_chip *chip, int addr, int reg, u16 val)
 
 	assert_reg_lock(chip);
 
-	err = mv88e6xxx_rmu_write(chip, addr, reg, val);
+	err = mv88e6xxx_rmu_defer_to_mdio(chip) ?
+		-EOPNOTSUPP : mv88e6xxx_rmu_write(chip, addr, reg, val);
 	if (mv88e6xxx_rmu_can_mdio_fallback(chip, err))
 		err = mv88e6xxx_smi_write(chip, addr, reg, val);
 	if (err)
@@ -140,7 +154,8 @@ int mv88e6xxx_wait_bit(struct mv88e6xxx_chip *chip, int addr, int reg,
 {
 	int err;
 
-	err = mv88e6xxx_rmu_wait_bit(chip, addr, reg, bit, val);
+	err = mv88e6xxx_rmu_defer_to_mdio(chip) ?
+		-EOPNOTSUPP : mv88e6xxx_rmu_wait_bit(chip, addr, reg, bit, val);
 
 	if (mv88e6xxx_rmu_can_mdio_fallback(chip, err))
 		err = mv88e6xxx_wait_mask(chip, addr, reg, BIT(bit),
