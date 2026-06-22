@@ -26,6 +26,11 @@
 
 	/delete-node/ regulator;
 
+	/* OP-TEE (BL32) not loaded by our firmware; reclaim its 16 MiB reservation. */
+	reserved-memory {
+		/delete-node/ tee@4400000;
+	};
+
 	reg_usb3_vbus: usb3-vbus {
 		compatible = "regulator-fixed";
 		regulator-name = "usb3-vbus";
@@ -170,7 +175,7 @@
 
 			switch0port5: ethernet-port@5 {
 				reg = <5>;
-				label = "wan";
+				label = "lan4";
 				phy-handle = <&extphy>;
 				phy-mode = "sgmii";
 			};
