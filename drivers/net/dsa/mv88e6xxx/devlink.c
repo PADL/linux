@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include <net/dsa.h>
 
+#include "avb.h"
 #include "chip.h"
 #include "devlink.h"
 #include "global1.h"
@@ -92,6 +93,86 @@ void mv88e6xxx_teardown_devlink_params(struct dsa_switch *ds)
 {
 	dsa_devlink_params_unregister(ds, mv88e6xxx_devlink_params,
 				      ARRAY_SIZE(mv88e6xxx_devlink_params));
+}
+
+enum mv88e6xxx_devlink_port_param_id {
+	MV88E6XXX_DEVLINK_PORT_PARAM_ID_BASE = DEVLINK_PARAM_GENERIC_ID_MAX,
+	MV88E6XXX_DEVLINK_PORT_PARAM_ID_AVB_CFG,
+};
+
+int mv88e6xxx_devlink_port_param_get(struct dsa_switch *ds, int port, u32 id,
+				     struct devlink_param_gset_ctx *ctx)
+{
+	struct mv88e6xxx_chip *chip = ds->priv;
+	int err;
+
+	mv88e6xxx_reg_lock(chip);
+
+	switch (id) {
+	case MV88E6XXX_DEVLINK_PORT_PARAM_ID_AVB_CFG:
+		err = mv88e6xxx_avb_port_get_cfg(chip, port, &ctx->val.vu16);
+		break;
+	default:
+		err = -EOPNOTSUPP;
+		break;
+	}
+
+	mv88e6xxx_reg_unlock(chip);
+
+	return err;
+}
+
+int mv88e6xxx_devlink_port_param_set(struct dsa_switch *ds, int port, u32 id,
+				     struct devlink_param_gset_ctx *ctx)
+{
+	struct mv88e6xxx_chip *chip = ds->priv;
+	int err;
+
+	mv88e6xxx_reg_lock(chip);
+
+	switch (id) {
+	case MV88E6XXX_DEVLINK_PORT_PARAM_ID_AVB_CFG:
+		err = mv88e6xxx_avb_port_set_cfg(chip, port, ctx->val.vu16);
+		break;
+	default:
+		err = -EOPNOTSUPP;
+		break;
+	}
+
+	mv88e6xxx_reg_unlock(chip);
+
+	return err;
+}
+
+static const struct devlink_param mv88e6xxx_devlink_port_params[] = {
+	DSA_DEVLINK_PORT_PARAM_DRIVER(MV88E6XXX_DEVLINK_PORT_PARAM_ID_AVB_CFG,
+				      "avb_cfg", DEVLINK_PARAM_TYPE_U16,
+				      BIT(DEVLINK_PARAM_CMODE_RUNTIME)),
+};
+
+int mv88e6xxx_setup_devlink_params_port(struct dsa_switch *ds, int port)
+{
+	struct mv88e6xxx_chip *chip = ds->priv;
+
+	/* Only user ports on chips with the AVB port register block. */
+	if (!chip->info->ops->avb_ops || !dsa_is_user_port(ds, port))
+		return 0;
+
+	return dsa_devlink_port_params_register(ds, port,
+						mv88e6xxx_devlink_port_params,
+						ARRAY_SIZE(mv88e6xxx_devlink_port_params));
+}
+
+void mv88e6xxx_teardown_devlink_params_port(struct dsa_switch *ds, int port)
+{
+	struct mv88e6xxx_chip *chip = ds->priv;
+
+	if (!chip->info->ops->avb_ops || !dsa_is_user_port(ds, port))
+		return;
+
+	dsa_devlink_port_params_unregister(ds, port,
+					   mv88e6xxx_devlink_port_params,
+					   ARRAY_SIZE(mv88e6xxx_devlink_port_params));
 }
 
 enum mv88e6xxx_devlink_resource_id {
