@@ -4166,13 +4166,18 @@ static int mv88e6xxx_port_setup(struct dsa_switch *ds, int port)
 			return err;
 	}
 
-	return mv88e6xxx_setup_devlink_regions_port(ds, port);
+	err = mv88e6xxx_setup_devlink_regions_port(ds, port);
+	if (err)
+		return err;
+
+	return mv88e6xxx_setup_devlink_params_port(ds, port);
 }
 
 static void mv88e6xxx_port_teardown(struct dsa_switch *ds, int port)
 {
 	struct mv88e6xxx_chip *chip = ds->priv;
 
+	mv88e6xxx_teardown_devlink_params_port(ds, port);
 	mv88e6xxx_teardown_devlink_regions_port(ds, port);
 
 	if (chip->info->ops->pcs_ops &&
@@ -7615,6 +7620,8 @@ static const struct dsa_switch_ops mv88e6xxx_switch_ops = {
 	.get_ts_info		= mv88e6xxx_get_ts_info,
 	.devlink_param_get	= mv88e6xxx_devlink_param_get,
 	.devlink_param_set	= mv88e6xxx_devlink_param_set,
+	.devlink_port_param_get	= mv88e6xxx_devlink_port_param_get,
+	.devlink_port_param_set	= mv88e6xxx_devlink_port_param_set,
 	.devlink_info_get	= mv88e6xxx_devlink_info_get,
 	.port_lag_change	= mv88e6xxx_port_lag_change,
 	.port_lag_join		= mv88e6xxx_port_lag_join,

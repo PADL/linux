@@ -59,6 +59,8 @@
 #define MV88E6XXX_PORT_AVB_CFG_AVB_TUNNEL		0x0800
 #define MV88E6XXX_PORT_AVB_CFG_AVB_DISCARD_BAD		0x0400
 
+int mv88e6xxx_avb_port_get_cfg(struct mv88e6xxx_chip *chip, int port, u16 *cfg);
+int mv88e6xxx_avb_port_set_cfg(struct mv88e6xxx_chip *chip, int port, u16 cfg);
 u16 mv88e6xxx_avb_pri_map_to_reg(const struct tc_mqprio_qopt *qopt);
 int mv88e6xxx_avb_enable(struct mv88e6xxx_chip *chip,
 			 struct tc_mqprio_qopt_offload *mqprio);

@@ -70,6 +70,36 @@ static int mv88e6xxx_qav_set_iso_ptr(struct mv88e6xxx_chip *chip, u16 threshold)
 	return mv88e6xxx_qav_write(chip, MV88E6XXX_QAV_CFG, data);
 }
 
+int mv88e6xxx_avb_port_get_cfg(struct mv88e6xxx_chip *chip, int port, u16 *cfg)
+{
+	return mv88e6xxx_port_avb_read(chip, port, MV88E6XXX_PORT_AVB_CFG,
+				       cfg, 1);
+}
+
+/* Apply the full per-port AVB config (mode + policy flags) supplied by
+ * userspace; preserve the reserved bits 9:0.
+ */
+int mv88e6xxx_avb_port_set_cfg(struct mv88e6xxx_chip *chip, int port, u16 cfg)
+{
+	u16 mask = MV88E6XXX_PORT_AVB_CFG_AVB_MODE |
+		   MV88E6XXX_PORT_AVB_CFG_AVB_OVERRIDE |
+		   MV88E6XXX_PORT_AVB_CFG_AVB_FILTER_BAD_AVB |
+		   MV88E6XXX_PORT_AVB_CFG_AVB_TUNNEL |
+		   MV88E6XXX_PORT_AVB_CFG_AVB_DISCARD_BAD;
+	u16 data;
+	int err;
+
+	err = mv88e6xxx_port_avb_read(chip, port, MV88E6XXX_PORT_AVB_CFG,
+				      &data, 1);
+	if (err)
+		return err;
+
+	data &= ~mask;
+	data |= cfg & mask;
+
+	return mv88e6xxx_port_avb_write(chip, port, MV88E6XXX_PORT_AVB_CFG, data);
+}
+
 static int mv88e6xxx_avb_set_port_avb_mode(struct mv88e6xxx_chip *chip,
 					   int port, u16 avb_mode)
 {
