@@ -7,11 +7,17 @@
 
 int mv88e6xxx_setup_devlink_params(struct dsa_switch *ds);
 void mv88e6xxx_teardown_devlink_params(struct dsa_switch *ds);
+int mv88e6xxx_setup_devlink_params_port(struct dsa_switch *ds, int port);
+void mv88e6xxx_teardown_devlink_params_port(struct dsa_switch *ds, int port);
 int mv88e6xxx_setup_devlink_resources(struct dsa_switch *ds);
 int mv88e6xxx_devlink_param_get(struct dsa_switch *ds, u32 id,
 				struct devlink_param_gset_ctx *ctx);
 int mv88e6xxx_devlink_param_set(struct dsa_switch *ds, u32 id,
 				struct devlink_param_gset_ctx *ctx);
+int mv88e6xxx_devlink_port_param_get(struct dsa_switch *ds, int port, u32 id,
+				     struct devlink_param_gset_ctx *ctx);
+int mv88e6xxx_devlink_port_param_set(struct dsa_switch *ds, int port, u32 id,
+				     struct devlink_param_gset_ctx *ctx);
 int mv88e6xxx_setup_devlink_regions_global(struct dsa_switch *ds);
 void mv88e6xxx_teardown_devlink_regions_global(struct dsa_switch *ds);
 int mv88e6xxx_setup_devlink_regions_port(struct dsa_switch *ds, int port);
