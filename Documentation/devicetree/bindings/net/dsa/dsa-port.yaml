@@ -52,7 +52,9 @@ properties:
       the default is incompatible with the Ethernet device.
     enum:
       - dsa
+      - dsa-ptp-reserved2-ts
       - edsa
+      - edsa-ptp-reserved2-ts
       - ocelot
       - ocelot-8021q
       - rtl8_4
