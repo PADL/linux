@@ -19,6 +19,7 @@ bool dsa_port_supports_hwtstamp(struct dsa_port *dp);
 void dsa_port_set_tag_protocol(struct dsa_port *cpu_dp,
 			       const struct dsa_device_ops *tag_ops);
 int dsa_port_set_state(struct dsa_port *dp, u8 state, bool do_fast_age);
+int dsa_port_flush_dynamic_fdb(const struct dsa_port *dp, u16 vid);
 int dsa_port_set_mst_state(struct dsa_port *dp,
 			   const struct switchdev_mst_state *state,
 			   struct netlink_ext_ack *extack);
