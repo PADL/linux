@@ -216,6 +216,14 @@ static struct ptp_header *mv88e6xxx_should_tstamp(struct mv88e6xxx_chip *chip,
 	if (!chip->info->ptp_support)
 		return NULL;
 
+	/* Only v2 is supported: the time stamping paths assume the v2 header
+	 * layout, and the driver advertises no v1 rx filter. Leave anything
+	 * else alone rather than report a time stamp that cannot be vouched
+	 * for.
+	 */
+	if ((type & PTP_CLASS_VMASK) != PTP_CLASS_V2)
+		return NULL;
+
 	hdr = ptp_parse_header(skb, type);
 	if (!hdr)
 		return NULL;
