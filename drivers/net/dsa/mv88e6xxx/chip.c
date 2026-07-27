@@ -2815,6 +2815,14 @@ static int mv88e6xxx_port_vlan_fast_age(struct dsa_switch *ds, int port, u16 vid
 	if (err)
 		goto unlock;
 
+	/* mv88e6xxx_vtu_get() also succeeds when the VID has no VTU entry, in
+	 * which case vlan.fid holds either zero or the FID of an unrelated
+	 * VLAN. Nothing is learned in a VLAN this switch does not know, so
+	 * there is nothing to age.
+	 */
+	if (!vlan.valid)
+		goto unlock;
+
 	err = mv88e6xxx_port_fast_age_fid(chip, port, vlan.fid);
 
 unlock:
