@@ -7797,7 +7797,9 @@ static int mv88e6xxx_connect_tag_protocol(struct dsa_switch *ds,
 
 	switch (proto) {
 	case DSA_TAG_PROTO_DSA:
+	case DSA_TAG_PROTO_DSA_PTP_RESERVED2_TS:
 	case DSA_TAG_PROTO_EDSA:
+	case DSA_TAG_PROTO_EDSA_PTP_RESERVED2_TS:
 		tagger_data->rmu_frame2reg = mv88e6xxx_rmu_frame2reg_handler;
 		break;
 	default:
