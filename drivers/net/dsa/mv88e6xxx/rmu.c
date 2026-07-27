@@ -153,7 +153,8 @@ static int mv88e6xxx_rmu_request(struct mv88e6xxx_chip *chip,
 	data = skb_put(skb, req_len);
 	memcpy(data, req, req_len);
 
-	edsa = chip->tag_protocol == DSA_TAG_PROTO_EDSA;
+	edsa = chip->tag_protocol == DSA_TAG_PROTO_EDSA ||
+	       chip->tag_protocol == DSA_TAG_PROTO_EDSA_PTP_RESERVED2_TS;
 
 	if (!chip->ds->tagger_data) {
 		kfree_skb(skb);
