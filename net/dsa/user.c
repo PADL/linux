@@ -576,6 +576,71 @@ dsa_user_fdb_dump(struct sk_buff *skb, struct netlink_callback *cb,
 	return err;
 }
 
+static const struct nla_policy dsa_user_fdb_del_bulk_policy[NDA_MAX + 1] = {
+	[NDA_VLAN]		= NLA_POLICY_RANGE(NLA_U16, 1, VLAN_N_VID - 2),
+	[NDA_IFINDEX]		= NLA_POLICY_MIN(NLA_S32, 1),
+	[NDA_NDM_STATE_MASK]	= { .type = NLA_U16 },
+	[NDA_NDM_FLAGS_MASK]	= { .type = NLA_U8 },
+};
+
+#define DSA_FDB_FLUSH_IGNORED_NDM_FLAGS (NTF_MASTER | NTF_SELF)
+
+/* Fast ageing deletes dynamically learned entries and nothing else, so no
+ * ndm_state or ndm_flags bit selects anything it can delete.
+ */
+#define DSA_FDB_FLUSH_ALLOWED_NDM_STATES 0
+#define DSA_FDB_FLUSH_ALLOWED_NDM_FLAGS 0
+
+static int dsa_user_fdb_del_bulk(struct nlmsghdr *nlh, struct net_device *dev,
+				 struct netlink_ext_ack *extack)
+{
+	const struct dsa_port *dp = dsa_user_to_port(dev);
+	struct ndmsg *ndm = nlmsg_data(nlh);
+	struct nlattr *tb[NDA_MAX + 1];
+	u8 ndm_flags;
+	u16 vid = 0;
+	int err;
+
+	ndm_flags = ndm->ndm_flags & ~DSA_FDB_FLUSH_IGNORED_NDM_FLAGS;
+
+	err = nlmsg_parse(nlh, sizeof(*ndm), tb, NDA_MAX,
+			  dsa_user_fdb_del_bulk_policy, extack);
+	if (err)
+		return err;
+
+	/* Refusing these rather than ignoring them keeps a request which asks
+	 * for entries that cannot be deleted from being answered by deleting
+	 * the entries it asked to keep. NDA_NDM_STATE_MASK and
+	 * NDA_NDM_FLAGS_MASK need no such handling: with no flag required of an
+	 * entry, every dynamically learned one matches whichever categories the
+	 * masks select.
+	 */
+	if (ndm_flags & ~DSA_FDB_FLUSH_ALLOWED_NDM_FLAGS) {
+		NL_SET_ERR_MSG_MOD(extack,
+				   "Unsupported fdb flush ndm flag bits set");
+		return -EOPNOTSUPP;
+	}
+	if (ndm->ndm_state & ~DSA_FDB_FLUSH_ALLOWED_NDM_STATES) {
+		NL_SET_ERR_MSG_MOD(extack,
+				   "Unsupported fdb flush ndm state bits set");
+		return -EOPNOTSUPP;
+	}
+
+	/* The bridge uses NDA_IFINDEX to scope a flush to one of its ports.
+	 * Here the port is the device the request was sent to.
+	 */
+	if (tb[NDA_IFINDEX] && nla_get_s32(tb[NDA_IFINDEX]) != dev->ifindex) {
+		NL_SET_ERR_MSG_MOD(extack,
+				   "Flush device does not match target port");
+		return -EINVAL;
+	}
+
+	if (tb[NDA_VLAN])
+		vid = nla_get_u16(tb[NDA_VLAN]);
+
+	return dsa_port_flush_dynamic_fdb(dp, vid);
+}
+
 static int dsa_user_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 {
 	struct dsa_user_priv *p = netdev_priv(dev);
@@ -2592,6 +2657,7 @@ static const struct net_device_ops dsa_user_netdev_ops = {
 	.ndo_set_rx_mode	= dsa_user_set_rx_mode,
 	.ndo_set_mac_address	= dsa_user_set_mac_address,
 	.ndo_fdb_dump		= dsa_user_fdb_dump,
+	.ndo_fdb_del_bulk	= dsa_user_fdb_del_bulk,
 	.ndo_eth_ioctl		= dsa_user_ioctl,
 	.ndo_get_iflink		= dsa_user_get_iflink,
 #ifdef CONFIG_NET_POLL_CONTROLLER

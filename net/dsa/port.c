@@ -81,6 +81,26 @@ static int dsa_port_vlan_fast_age(const struct dsa_port *dp, u16 vid)
 	return err;
 }
 
+/* Flush this port's dynamically learned FDB entries, scoped to a VLAN when
+ * one is given. Widening a VLAN-scoped request to the whole port would delete
+ * entries the caller asked to keep, so a switch without VLAN-scoped fast age
+ * refuses it instead.
+ */
+int dsa_port_flush_dynamic_fdb(const struct dsa_port *dp, u16 vid)
+{
+	struct dsa_switch *ds = dp->ds;
+
+	if (vid)
+		return dsa_port_vlan_fast_age(dp, vid);
+
+	if (!ds->ops->port_fast_age)
+		return -EOPNOTSUPP;
+
+	dsa_port_fast_age(dp);
+
+	return 0;
+}
+
 static int dsa_port_msti_fast_age(const struct dsa_port *dp, u16 msti)
 {
 	DECLARE_BITMAP(vids, VLAN_N_VID) = { 0 };
