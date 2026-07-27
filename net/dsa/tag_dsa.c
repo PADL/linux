@@ -360,7 +360,8 @@ static void dsa_rmu_reg2frame(struct dsa_switch *ds,
 	dsa_header[2] = 6 << 5 | 0xf;
 	dsa_header[3] = 0; /* Sequence number is filled in later */
 
-	if (ds->dst->tag_ops->proto == DSA_TAG_PROTO_EDSA) {
+	if (ds->dst->tag_ops->proto == DSA_TAG_PROTO_EDSA ||
+	    ds->dst->tag_ops->proto == DSA_TAG_PROTO_EDSA_PTP_RESERVED2_TS) {
 		u8 *edsa_header = skb_push(skb, 4);
 
 		edsa_header[0] = (ETH_P_EDSA >> 8) & 0xff;
@@ -431,6 +432,8 @@ static const struct dsa_device_ops dsa_ptp_reserved2_ts_netdev_ops = {
 	.proto		 = DSA_TAG_PROTO_DSA_PTP_RESERVED2_TS,
 	.xmit		 = dsa_xmit,
 	.rcv		 = dsa_rcv,
+	.connect	 = dsa_tag_connect,
+	.disconnect	 = dsa_tag_disconnect,
 	.needed_headroom = DSA_HLEN,
 };
 
@@ -490,6 +493,8 @@ static const struct dsa_device_ops edsa_ptp_reserved2_ts_netdev_ops = {
 	.proto		 = DSA_TAG_PROTO_EDSA_PTP_RESERVED2_TS,
 	.xmit		 = edsa_xmit,
 	.rcv		 = edsa_rcv,
+	.connect	 = dsa_tag_connect,
+	.disconnect	 = dsa_tag_disconnect,
 	.needed_headroom = EDSA_HLEN,
 };
 
