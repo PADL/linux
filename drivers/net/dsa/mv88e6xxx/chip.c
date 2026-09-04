@@ -8090,6 +8090,11 @@ static int mv88e6xxx_probe_common(struct device *dev,
 	if (chip->reset)
 		usleep_range(10000, 20000);
 
+	/* RMU-only detection registers the switch, which runs PTP setup */
+	err = mv88e6xxx_ptp_extclk_probe(chip);
+	if (err)
+		goto out;
+
 	err = (*detect)(chip);
 	if (err)
 		goto out;
