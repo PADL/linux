@@ -61,6 +61,24 @@ properties:
       GPIO to be used to reset the whole device
     maxItems: 1
 
+  clocks:
+    maxItems: 1
+    description: External reference clock routed to the PTP_EXTCLK function
+      of the switch GPIO pin named by marvell,ptp-extclk-pin. When present,
+      the PTP time base is clocked from this input instead of the internal
+      clock. Its period must be a whole number of picoseconds representable
+      in 16 bits, and the frequency must not exceed 250 MHz.
+
+  clock-names:
+    const: ptp-extclk
+
+  marvell,ptp-extclk-pin:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    maximum: 15
+    description: Index of the switch GPIO pin carrying the external PTP
+      clock. The pin is configured as a PTP_EXTCLK input and is not
+      available for external timestamping.
+
   interrupts:
     description: The switch provides an external interrupt line, but it is
       not always used by target systems.
@@ -104,6 +122,11 @@ required:
   - compatible
   - reg
 
+dependencies:
+  clocks: [ clock-names, "marvell,ptp-extclk-pin" ]
+  clock-names: [ clocks ]
+  "marvell,ptp-extclk-pin": [ clocks, clock-names ]
+
 unevaluatedProperties: false
 
 examples:
@@ -117,6 +140,9 @@ examples:
             compatible = "marvell,mv88e6085";
             reg = <0>;
             reset-gpios = <&gpio5 1 GPIO_ACTIVE_LOW>;
+            clocks = <&ptp_osc>;
+            clock-names = "ptp-extclk";
+            marvell,ptp-extclk-pin = <8>;
 
             mdio {
                 #address-cells = <1>;
