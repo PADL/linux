@@ -225,7 +225,7 @@ static int mv88e6352_g2_scratch_gpio_set_pctl(struct mv88e6xxx_chip *chip,
 	if (err)
 		return err;
 
-	val = (val & ~mask) | ((func & mask) << offset);
+	val = (val & ~mask) | ((func << offset) & mask);
 
 	return mv88e6xxx_g2_scratch_write(chip, reg, val);
 }
