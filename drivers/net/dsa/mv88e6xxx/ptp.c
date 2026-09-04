@@ -25,7 +25,7 @@ struct mv88e6xxx_cc_coeffs {
 	u32 cc_mult_dem;
 };
 
-/* Family MV88E6250:
+/* Family MV88E6250, or any chip clocked from a 100 MHz external clock:
  * Raw timestamps are in units of 10-ns clock periods.
  *
  * clkadj = scaled_ppm * 10*2^28 / (10^6 * 2^16)
@@ -109,6 +109,120 @@ static int mv88e6352_set_gpio_func(struct mv88e6xxx_chip *chip, int pin,
 		return err;
 
 	return chip->info->ops->gpio_ops->set_pctl(chip, pin, func);
+}
+
+/* Fastest external PTP clock for which the 32-bit cycle counter still wraps
+ * well outside MV88E6XXX_TAI_OVERFLOW_PERIOD.
+ */
+#define MV88E6XXX_PTP_EXTCLK_MAX_HZ	250000000UL
+
+int mv88e6xxx_ptp_extclk_probe(struct mv88e6xxx_chip *chip)
+{
+	struct device *dev = chip->dev;
+	unsigned long rate;
+	u64 period_ps = 0;
+	struct clk *clk;
+	u32 pin;
+	int err;
+
+	err = device_property_read_u32(dev, "marvell,ptp-extclk-pin", &pin);
+	if (err) {
+		if (device_property_present(dev, "clocks")) {
+			dev_err(dev, "external PTP clock given without a GPIO pin\n");
+			return -EINVAL;
+		}
+		return 0;
+	}
+
+	if (!chip->info->ptp_support || !chip->info->ops->gpio_ops) {
+		dev_err(dev, "external PTP clock is not supported\n");
+		return -EOPNOTSUPP;
+	}
+
+	if (pin >= mv88e6xxx_num_gpio(chip)) {
+		dev_err(dev, "invalid external PTP clock GPIO %u\n", pin);
+		return -EINVAL;
+	}
+
+	clk = devm_clk_get_enabled(dev, "ptp-extclk");
+	if (IS_ERR(clk))
+		return dev_err_probe(dev, PTR_ERR(clk),
+				     "failed to get external PTP clock\n");
+
+	rate = clk_get_rate(clk);
+	if (rate)
+		period_ps = DIV_ROUND_CLOSEST_ULL(PSEC_PER_SEC, rate);
+	if (!rate || rate > MV88E6XXX_PTP_EXTCLK_MAX_HZ || period_ps > U16_MAX) {
+		dev_err(dev, "external PTP clock rate %lu Hz out of range\n",
+			rate);
+		return -EINVAL;
+	}
+
+	chip->ptp_extclk = clk;
+	chip->ptp_extclk_pin = pin;
+	chip->ptp_extclk_period_ps = period_ps;
+
+	return 0;
+}
+
+static int mv88e6xxx_ptp_extclk_select(struct mv88e6xxx_chip *chip,
+				       bool enable)
+{
+	u16 val;
+	int err;
+
+	err = mv88e6xxx_tai_read(chip, MV88E6352_TAI_CLK_CFG, &val, 1);
+	if (err)
+		return err;
+
+	/* TrigGenInt is read-only-clear */
+	val &= ~MV88E6352_TAI_CLK_CFG_TRIG_GEN_INT;
+	if (enable)
+		val |= MV88E6352_TAI_CLK_CFG_EXTCLK;
+	else
+		val &= ~MV88E6352_TAI_CLK_CFG_EXTCLK;
+
+	return mv88e6xxx_tai_write(chip, MV88E6352_TAI_CLK_CFG, val);
+}
+
+/* Must be called with the register lock held */
+static void mv88e6xxx_ptp_extclk_disable(struct mv88e6xxx_chip *chip)
+{
+	mv88e6xxx_ptp_extclk_select(chip, false);
+	mv88e6352_set_gpio_func(chip, chip->ptp_extclk_pin,
+				MV88E6352_G2_SCRATCH_GPIO_PCTL_GPIO, true);
+}
+
+/* Route the external clock to the PTP core. The pin must carry the clock
+ * before it is selected, and TSClkPer must hold its period before the cycle
+ * counter coefficients are derived from it. A failure part way through is
+ * undone by mv88e6xxx_ptp_free().
+ * Must be called with the register lock held.
+ */
+static int mv88e6xxx_ptp_extclk_enable(struct mv88e6xxx_chip *chip)
+{
+	u32 pin = chip->ptp_extclk_pin;
+	int err;
+
+	err = mv88e6352_set_gpio_func(chip, pin,
+				      MV88E6352_G2_SCRATCH_GPIO_PCTL_EXTCLK,
+				      true);
+	if (err)
+		return err;
+
+	err = mv88e6xxx_tai_write(chip, MV88E6XXX_TAI_CLOCK_PERIOD,
+				  chip->ptp_extclk_period_ps);
+	if (err)
+		return err;
+
+	err = mv88e6xxx_ptp_extclk_select(chip, true);
+	if (err)
+		return err;
+
+	dev_info(chip->dev, "PTP clocked from GPIO %u with a %u ps period\n",
+		 pin, chip->ptp_extclk_period_ps);
+
+	return 0;
 }
 
 static const struct mv88e6xxx_cc_coeffs *
@@ -413,6 +527,12 @@ static int mv88e6352_ptp_enable(struct ptp_clock_info *ptp,
 static int mv88e6352_ptp_verify(struct ptp_clock_info *ptp, unsigned int pin,
 				enum ptp_pin_function func, unsigned int chan)
 {
+	struct mv88e6xxx_chip *chip = ptp_to_chip(ptp);
+
+	if (func != PTP_PF_NONE && chip->ptp_extclk &&
+	    pin == chip->ptp_extclk_pin)
+		return -EBUSY;
+
 	switch (func) {
 	case PTP_PF_NONE:
 	case PTP_PF_EXTTS:
@@ -514,7 +634,15 @@ static void mv88e6xxx_ptp_overflow_check(struct work_struct *work)
 int mv88e6xxx_ptp_setup(struct mv88e6xxx_chip *chip)
 {
 	const struct mv88e6xxx_ptp_ops *ptp_ops = chip->info->ops->ptp_ops;
+	struct ptp_clock *ptp_clock;
+	int err;
 	int i;
+
+	if (chip->ptp_extclk) {
+		err = mv88e6xxx_ptp_extclk_enable(chip);
+		if (err)
+			return err;
+	}
 
 	/* Set up the cycle counter */
 	chip->cc_coeffs = mv88e6xxx_cc_coeff_get(chip);
@@ -574,7 +702,6 @@ int mv88e6xxx_ptp_setup(struct mv88e6xxx_chip *chip)
 	if (ptp_ops->set_ptp_cpu_port) {
 		struct dsa_port *dp;
 		int upstream = 0;
-		int err;
 
 		dsa_switch_for_each_user_port(dp, chip->ds) {
 			upstream = dsa_upstream_port(chip->ds, dp->index);
@@ -588,9 +715,10 @@ int mv88e6xxx_ptp_setup(struct mv88e6xxx_chip *chip)
 		}
 	}
 
-	chip->ptp_clock = ptp_clock_register(&chip->ptp_clock_info, chip->dev);
-	if (IS_ERR(chip->ptp_clock))
-		return PTR_ERR(chip->ptp_clock);
+	ptp_clock = ptp_clock_register(&chip->ptp_clock_info, chip->dev);
+	if (IS_ERR(ptp_clock))
+		return PTR_ERR(ptp_clock);
+	chip->ptp_clock = ptp_clock;
 
 	schedule_delayed_work(&chip->overflow_work,
 			      MV88E6XXX_TAI_OVERFLOW_PERIOD);
@@ -618,5 +746,11 @@ void mv88e6xxx_ptp_free(struct mv88e6xxx_chip *chip)
 		mv88e6xxx_ptp_shutdown(chip);
 		ptp_clock_unregister(chip->ptp_clock);
 		chip->ptp_clock = NULL;
+	}
+
+	if (chip->ptp_extclk) {
+		mv88e6xxx_reg_lock(chip);
+		mv88e6xxx_ptp_extclk_disable(chip);
+		mv88e6xxx_reg_unlock(chip);
 	}
 }
