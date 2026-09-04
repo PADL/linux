@@ -8093,6 +8093,10 @@ static int mv88e6xxx_probe_common(struct device *dev,
 			chip->eeprom_len = pdata->eeprom_len;
 	}
 
+	err = mv88e6xxx_ptp_extclk_probe(chip);
+	if (err)
+		goto out_phy;
+
 	mv88e6xxx_reg_lock(chip);
 	err = mv88e6xxx_switch_reset(chip);
 	mv88e6xxx_reg_unlock(chip);

@@ -8,6 +8,7 @@
 #ifndef _MV88E6XXX_CHIP_H
 #define _MV88E6XXX_CHIP_H
 
+#include <linux/clk.h>
 #include <linux/dcbnl.h> /* for IEEE_8021Q_MAX_PRIORITIES */
 #include <linux/idr.h>
 #include <linux/if_vlan.h>
@@ -492,6 +493,13 @@ struct mv88e6xxx_chip {
 	struct timecounter	tstamp_tc;
 	struct delayed_work	overflow_work;
 	const struct mv88e6xxx_cc_coeffs *cc_coeffs;
+
+	/* External PTP clock on a switch GPIO pin; NULL when the internal
+	 * clock is used.
+	 */
+	struct clk		*ptp_extclk;
+	u32			ptp_extclk_pin;
+	u16			ptp_extclk_period_ps;
 
 	struct ptp_clock	*ptp_clock;
 	struct ptp_clock_info	ptp_clock_info;

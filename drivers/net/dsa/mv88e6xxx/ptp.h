@@ -33,6 +33,11 @@
 /* Offset 0x01: Timestamp Clock Period (ps) */
 #define MV88E6XXX_TAI_CLOCK_PERIOD		0x01
 
+/* Offset 0x08: TAI Global Config, clock selection */
+#define MV88E6352_TAI_CLK_CFG			0x08
+#define MV88E6352_TAI_CLK_CFG_TRIG_GEN_INT	0x8000
+#define MV88E6352_TAI_CLK_CFG_EXTCLK		0x4000
+
 /* Offset 0x09: Event Status */
 #define MV88E6352_TAI_EVENT_STATUS		0x09
 #define MV88E6352_TAI_EVENT_STATUS_ERROR	0x0200
@@ -66,6 +71,7 @@
 
 #ifdef CONFIG_NET_DSA_MV88E6XXX_PTP
 
+int mv88e6xxx_ptp_extclk_probe(struct mv88e6xxx_chip *chip);
 int mv88e6xxx_ptp_setup(struct mv88e6xxx_chip *chip);
 void mv88e6xxx_ptp_free(struct mv88e6xxx_chip *chip);
 void mv88e6xxx_ptp_shutdown(struct mv88e6xxx_chip *chip);
@@ -79,6 +85,11 @@ extern const struct mv88e6xxx_ptp_ops mv88e6352_ptp_ops;
 extern const struct mv88e6xxx_ptp_ops mv88e6390_ptp_ops;
 
 #else /* !CONFIG_NET_DSA_MV88E6XXX_PTP */
+
+static inline int mv88e6xxx_ptp_extclk_probe(struct mv88e6xxx_chip *chip)
+{
+	return 0;
+}
 
 static inline int mv88e6xxx_ptp_setup(struct mv88e6xxx_chip *chip)
 {
