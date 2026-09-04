@@ -310,6 +310,7 @@
 #define MV88E6352_G2_SCRATCH_GPIO_PCTL_GPIO	0
 #define MV88E6352_G2_SCRATCH_GPIO_PCTL_TRIG	1
 #define MV88E6352_G2_SCRATCH_GPIO_PCTL_EVREQ	2
+#define MV88E6352_G2_SCRATCH_GPIO_PCTL_EXTCLK	3
 
 int mv88e6xxx_g2_read(struct mv88e6xxx_chip *chip, int reg, u16 *val);
 int mv88e6xxx_g2_write(struct mv88e6xxx_chip *chip, int reg, u16 val);
