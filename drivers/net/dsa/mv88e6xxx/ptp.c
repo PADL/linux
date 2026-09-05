@@ -204,9 +204,11 @@ static int mv88e6xxx_ptp_extclk_enable(struct mv88e6xxx_chip *chip)
 	u32 pin = chip->ptp_extclk_pin;
 	int err;
 
+	mv88e6352_g2_scratch_gpio_dump(chip, "extclk before mux");
 	err = mv88e6352_set_gpio_func(chip, pin,
 				      MV88E6352_G2_SCRATCH_GPIO_PCTL_EXTCLK,
 				      true);
+	mv88e6352_g2_scratch_gpio_dump(chip, "extclk after mux");
 	if (err)
 		return err;
 
@@ -637,6 +639,10 @@ int mv88e6xxx_ptp_setup(struct mv88e6xxx_chip *chip)
 	struct ptp_clock *ptp_clock;
 	int err;
 	int i;
+
+	/* DEBUG: show the reset-time GPIO state on every board */
+	if (chip->info->ops->gpio_ops)
+		mv88e6352_g2_scratch_gpio_dump(chip, "ptp setup");
 
 	if (chip->ptp_extclk) {
 		err = mv88e6xxx_ptp_extclk_enable(chip);

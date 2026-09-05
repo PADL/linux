@@ -312,6 +312,8 @@
 #define MV88E6352_G2_SCRATCH_GPIO_PCTL_EVREQ	2
 #define MV88E6352_G2_SCRATCH_GPIO_PCTL_EXTCLK	3
 
+void mv88e6352_g2_scratch_gpio_dump(struct mv88e6xxx_chip *chip,
+				    const char *tag);
 int mv88e6xxx_g2_read(struct mv88e6xxx_chip *chip, int reg, u16 *val);
 int mv88e6xxx_g2_write(struct mv88e6xxx_chip *chip, int reg, u16 val);
 int mv88e6xxx_g2_wait_bit(struct mv88e6xxx_chip *chip, int reg,

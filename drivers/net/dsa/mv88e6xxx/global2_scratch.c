@@ -230,6 +230,34 @@ static int mv88e6352_g2_scratch_gpio_set_pctl(struct mv88e6xxx_chip *chip,
 	return mv88e6xxx_g2_scratch_write(chip, reg, val);
 }
 
+/* DEBUG: dump the GPIO configuration, direction, data and pin control
+ * scratch registers.
+ */
+void mv88e6352_g2_scratch_gpio_dump(struct mv88e6xxx_chip *chip,
+				    const char *tag)
+{
+	u8 val[16];
+	int reg, err;
+
+	for (reg = MV88E6352_G2_SCRATCH_GPIO_CFG0;
+	     reg <= MV88E6352_G2_SCRATCH_GPIO_PCTL7; reg++) {
+		err = mv88e6xxx_g2_scratch_read(chip, reg, &val[reg - 0x60]);
+		if (err) {
+			dev_info(chip->dev, "%s: scratch 0x%02x read failed: %d\n",
+				 tag, reg, err);
+			return;
+		}
+	}
+
+	dev_info(chip->dev,
+		 "%s: GPIO cfg 0x60=%02x 0x61=%02x dir 0x62=%02x 0x63=%02x data 0x64=%02x 0x65=%02x\n",
+		 tag, val[0], val[1], val[2], val[3], val[4], val[5]);
+	dev_info(chip->dev,
+		 "%s: GPIO pctl 0x68..0x6f=%02x %02x %02x %02x %02x %02x %02x %02x\n",
+		 tag, val[8], val[9], val[10], val[11], val[12], val[13], val[14],
+		 val[15]);
+}
+
 const struct mv88e6xxx_gpio_ops mv88e6352_gpio_ops = {
 	.get_data = mv88e6352_g2_scratch_gpio_get_data,
 	.set_data = mv88e6352_g2_scratch_gpio_set_data,
