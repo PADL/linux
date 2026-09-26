@@ -134,16 +134,6 @@ int mv88e6xxx_ptp_extclk_probe(struct mv88e6xxx_chip *chip)
 		return 0;
 	}
 
-	if (!chip->info->ptp_support || !chip->info->ops->gpio_ops) {
-		dev_err(dev, "external PTP clock is not supported\n");
-		return -EOPNOTSUPP;
-	}
-
-	if (pin >= mv88e6xxx_num_gpio(chip)) {
-		dev_err(dev, "invalid external PTP clock GPIO %u\n", pin);
-		return -EINVAL;
-	}
-
 	clk = devm_clk_get_enabled(dev, "ptp-extclk");
 	if (IS_ERR(clk))
 		return dev_err_probe(dev, PTR_ERR(clk),
@@ -189,8 +179,10 @@ static int mv88e6xxx_ptp_extclk_select(struct mv88e6xxx_chip *chip,
 static void mv88e6xxx_ptp_extclk_disable(struct mv88e6xxx_chip *chip)
 {
 	mv88e6xxx_ptp_extclk_select(chip, false);
-	mv88e6352_set_gpio_func(chip, chip->ptp_extclk_pin,
-				MV88E6352_G2_SCRATCH_GPIO_PCTL_GPIO, true);
+	/* Setup may have rejected the pin before muxing it */
+	if (chip->ptp_extclk_pin < mv88e6xxx_num_gpio(chip))
+		mv88e6352_set_gpio_func(chip, chip->ptp_extclk_pin,
+					MV88E6352_G2_SCRATCH_GPIO_PCTL_GPIO, true);
 }
 
 /* Route the external clock to the PTP core. The pin must carry the clock
@@ -203,6 +195,16 @@ static int mv88e6xxx_ptp_extclk_enable(struct mv88e6xxx_chip *chip)
 {
 	u32 pin = chip->ptp_extclk_pin;
 	int err;
+
+	if (!chip->info->ops->gpio_ops) {
+		dev_err(chip->dev, "external PTP clock is not supported\n");
+		return -EOPNOTSUPP;
+	}
+
+	if (pin >= mv88e6xxx_num_gpio(chip)) {
+		dev_err(chip->dev, "invalid external PTP clock GPIO %u\n", pin);
+		return -EINVAL;
+	}
 
 	mv88e6352_g2_scratch_gpio_dump(chip, "extclk before mux");
 	err = mv88e6352_set_gpio_func(chip, pin,
