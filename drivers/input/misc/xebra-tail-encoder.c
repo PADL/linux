@@ -47,6 +47,7 @@ struct xebra_tail_encoder {
 struct xebra_tail {
 	struct i2c_client *client;
 	struct input_dev *input;
+	char phys[32];
 
 	/* serialises reads, and protects the fields below */
 	struct mutex lock;
@@ -372,7 +373,10 @@ static int xebra_tail_probe(struct i2c_client *client)
 	if (!xt->input)
 		return -ENOMEM;
 
+	snprintf(xt->phys, sizeof(xt->phys), "%s/input0", dev_name(dev));
+
 	xt->input->name = "XEBRA Tail Encoders";
+	xt->input->phys = xt->phys;
 	xt->input->id.bustype = BUS_I2C;
 	xt->input->id.product = device_type;
 	xt->input->id.version = firmware;
