@@ -8,6 +8,7 @@
 /plugin/;
 
 #include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
 #include <dt-bindings/interrupt-controller/irq.h>
 
 /*
@@ -31,6 +32,42 @@
 				reg = <0x45>;
 				gpio-controller;
 				#gpio-cells = <2>;
+			};
+
+			/*
+			 * The same microcontroller's rotary encoders. Its
+			 * ENCODER_INT is wired to GPIO25 from the next board
+			 * revision; until then the driver polls.
+			 *
+			 * interrupt-parent = <&gpio>;
+			 * interrupts = <25 IRQ_TYPE_LEVEL_LOW>;
+			 */
+			tail_encoders: encoders@44 {
+				compatible = "padl,xebra-tail-encoder";
+				reg = <0x44>;
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				encoder@0 {
+					reg = <0>;
+					label = "HP1";
+					linux,axis = <REL_RX>;
+					linux,code = <BTN_1>;
+				};
+
+				encoder@1 {
+					reg = <1>;
+					label = "HP2";
+					linux,axis = <REL_RY>;
+					linux,code = <BTN_2>;
+				};
+
+				encoder@2 {
+					reg = <2>;
+					label = "Main";
+					linux,axis = <REL_DIAL>;
+					linux,code = <BTN_0>;
+				};
 			};
 
 			ft3519: ft3519@38 {
