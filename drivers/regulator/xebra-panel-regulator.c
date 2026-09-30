@@ -15,28 +15,13 @@
 #include <linux/reboot.h>
 #include <linux/regmap.h>
 #include <linux/regulator/driver.h>
+#include <linux/xebra-tail.h>
 
 /*
  * Regulator driver for the XEBRA board
  */
 
-/* I2C registers of the microcontroller. */
-#define DEVICE_TYPE		0x00	/* device type identifier */
-#define DEVICE_FIRMWARE		0x01	/* device firmware identifier */
-#define ENABLE_INTERRUPT	0x04	/* encoder interrupt enable */
-#define LCD_BACKLIGHT		0x05	/* PWM level, deprecated */
-#define GPIO_BITMASK		0x06	/* GPIO bitmask */
-#define ENCODER_COUNT		0x07	/* number of configured encoders */
-#define ENCODER_STATES		0x08	/* switch states and deltas */
-#define ENCODER_SWITCHES	0x09	/* switch states */
-#define ENCODER_POSITION	0x10	/* current encoder position */
-#define SHUTDOWN_DEVICE		0xFE	/* set with device type to shutdown */
-#define RESET_DEVICE		0xFF	/* set with device type to reset */
-
-/* Device type register */
-#define DT_XEBRA_TAIL		0xEB7A
-
-/* GPIO register */
+/* LCD_CONTROL bits, exposed as GPIOs */
 #define LCD_STBY_N_BIT		BIT(0)	/* LCD power */
 #define LCD_RST_BIT		BIT(1)	/* LCD reset */
 #define CTP_RESET_BIT		BIT(4)	/* Touchscreen reset */
@@ -60,7 +45,7 @@ struct xebra_panel_regulator {
 static const struct regmap_config xebra_panel_regmap_config = {
 	.reg_bits = 8,
 	.val_bits = 8,
-	.max_register = GPIO_BITMASK,
+	.max_register = XEBRA_TAIL_LCD_CONTROL,
 };
 
 static int xebra_panel_gpio_get_direction(struct gpio_chip *gc, unsigned int off)
@@ -87,7 +72,7 @@ static int xebra_panel_gpio_set(struct gpio_chip *gc, unsigned int off, int val)
 
 	state->poweron_state = last_val;
 
-	ret = regmap_write(state->regmap, GPIO_BITMASK, last_val);
+	ret = regmap_write(state->regmap, XEBRA_TAIL_LCD_CONTROL, last_val);
 
 	mutex_unlock(&state->lock);
 
@@ -140,8 +125,8 @@ static int xebra_panel_reset_device(struct i2c_client *client, u8 reg)
 	int ret;
 
 	addr_buf[0] = reg;
-	addr_buf[1] = (DT_XEBRA_TAIL >> 8) & 0xff;
-	addr_buf[2] = (DT_XEBRA_TAIL >> 0) & 0xff;
+	addr_buf[1] = (XEBRA_TAIL_DEVICE_TYPE_ID >> 8) & 0xff;
+	addr_buf[2] = (XEBRA_TAIL_DEVICE_TYPE_ID >> 0) & 0xff;
 
 	msgs[0].addr = client->addr;
 	msgs[0].flags = 0;
@@ -175,7 +160,7 @@ static int xebra_panel_sys_off(struct xebra_panel_regulator *state, u8 reg)
 	ret = xebra_panel_reset_device(state->i2c, reg);
 	if (ret) {
 		dev_err(&state->i2c->dev, "Failed to request %s: %d\n",
-			reg == SHUTDOWN_DEVICE ? "shutdown" : "reset", ret);
+			reg == XEBRA_TAIL_SHUTDOWN_DEVICE ? "shutdown" : "reset", ret);
 		return NOTIFY_DONE;
 	}
 
@@ -200,12 +185,12 @@ static int xebra_panel_sys_off(struct xebra_panel_regulator *state, u8 reg)
  */
 static int xebra_panel_power_off_prepare(struct sys_off_data *data)
 {
-	return xebra_panel_sys_off(data->cb_data, SHUTDOWN_DEVICE);
+	return xebra_panel_sys_off(data->cb_data, XEBRA_TAIL_SHUTDOWN_DEVICE);
 }
 
 static int xebra_panel_restart_prepare(struct sys_off_data *data)
 {
-	return xebra_panel_sys_off(data->cb_data, RESET_DEVICE);
+	return xebra_panel_sys_off(data->cb_data, XEBRA_TAIL_RESET_DEVICE);
 }
 
 /*
@@ -233,21 +218,21 @@ static int xebra_panel_i2c_probe(struct i2c_client *i2c)
 		goto error;
 	}
 
-	ret = xebra_panel_i2c_read(i2c, DEVICE_TYPE, &device_type);
+	ret = xebra_panel_i2c_read(i2c, XEBRA_TAIL_DEVICE_TYPE, &device_type);
 	if (ret < 0) {
 		dev_err(&i2c->dev, "Failed to read DEVICE_TYPE reg: %d\n", ret);
 		goto error;
 	}
 
-	if (device_type != DT_XEBRA_TAIL) {
+	if (device_type != XEBRA_TAIL_DEVICE_TYPE_ID) {
 		dev_err(&i2c->dev, "Unknown device type: 0x%04x\n", device_type);
 		ret = -ENODEV;
 		goto error;
 	}
 
-	ret = regmap_write(regmap, GPIO_BITMASK, 0);
+	ret = regmap_write(regmap, XEBRA_TAIL_LCD_CONTROL, 0);
 	if (ret) {
-		dev_err(&i2c->dev, "Failed to write GPIO_BITMASK reg: %d\n", ret);
+		dev_err(&i2c->dev, "Failed to write LCD_CONTROL reg: %d\n", ret);
 		goto error;
 	}
 
@@ -310,7 +295,7 @@ static void xebra_panel_i2c_shutdown(struct i2c_client *client)
 {
 	struct xebra_panel_regulator *state = i2c_get_clientdata(client);
 
-	regmap_write(state->regmap, GPIO_BITMASK, 0);
+	regmap_write(state->regmap, XEBRA_TAIL_LCD_CONTROL, 0);
 }
 
 static const struct of_device_id xebra_panel_dt_ids[] = {
