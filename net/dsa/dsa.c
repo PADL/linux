@@ -1864,37 +1864,51 @@ void dsa_inband_init(struct dsa_inband *inband, u32 seqno_mask)
 	spin_lock_init(&inband->resp_lock);
 	inband->seqno_mask = seqno_mask;
 	inband->seqno = 0;
+	inband->pending = false;
 }
 EXPORT_SYMBOL_GPL(dsa_inband_init);
 
-void dsa_inband_complete(struct dsa_inband *inband,
-			 void *resp, unsigned int resp_len,
-			 int err)
+/* dsa_inband_complete - deliver a reply to the pending inband request
+ * @inband: inband state for the switch
+ * @seqno: sequence number carried by the reply
+ * @resp: reply payload, or NULL
+ * @resp_len: size of @resp in bytes
+ * @err: negative errno to hand to the requester instead of @resp, or 0
+ *
+ * The sequence number is compared under the same lock that the requester
+ * uses to publish its buffer, so a late reply to a request that has timed
+ * out cannot be delivered to the request that follows it. Only the first
+ * reply to a pending request is delivered.
+ *
+ * Return true if the reply was delivered.
+ */
+bool dsa_inband_complete(struct dsa_inband *inband, u32 seqno,
+			 void *resp, unsigned int resp_len, int err)
 {
-	inband->err = err;
+	bool match;
 
-	if (!err) {
-		spin_lock_bh(&inband->resp_lock);
-		resp_len = min(inband->resp_len, resp_len);
-		if (inband->resp && resp)
-			memcpy(inband->resp, resp, resp_len);
-		spin_unlock_bh(&inband->resp_lock);
-		inband->err = resp_len;
+	spin_lock_bh(&inband->resp_lock);
+
+	match = inband->pending &&
+		seqno == (inband->seqno & inband->seqno_mask);
+	if (match) {
+		if (!err) {
+			resp_len = min(inband->resp_len, resp_len);
+			if (inband->resp && resp)
+				memcpy(inband->resp, resp, resp_len);
+			err = resp_len;
+		}
+
+		inband->err = err;
+		inband->pending = false;
+		complete(&inband->completion);
 	}
 
-	complete(&inband->completion);
+	spin_unlock_bh(&inband->resp_lock);
+
+	return match;
 }
 EXPORT_SYMBOL_GPL(dsa_inband_complete);
-
-int dsa_inband_wait_for_completion(struct dsa_inband *inband, int timeout_ms)
-{
-	unsigned long jiffies = msecs_to_jiffies(timeout_ms);
-
-	reinit_completion(&inband->completion);
-
-	return wait_for_completion_timeout(&inband->completion, jiffies);
-}
-EXPORT_SYMBOL_GPL(dsa_inband_wait_for_completion);
 
 /* dsa_inband_request - send an inband request frame and wait for the reply.
  * @inband: inband state for the switch
@@ -1910,9 +1924,6 @@ EXPORT_SYMBOL_GPL(dsa_inband_wait_for_completion);
  * Return the number of response bytes copied into @resp (0 when no response
  * is expected) on success, or a negative errno (-EOPNOTSUPP if the conduit
  * is down, -ETIMEDOUT if no reply arrived, or an error from the completer).
- *
- * Cannot use dsa_inband_wait_for_completion() since the completion needs to
- * be reinitialised before the skb is queued, to avoid races.
  */
 int dsa_inband_request(struct dsa_inband *inband, struct sk_buff *skb,
 		       void (*insert_seqno)(struct sk_buff *skb, u32 seqno),
@@ -1920,7 +1931,9 @@ int dsa_inband_request(struct dsa_inband *inband, struct sk_buff *skb,
 		       int timeout_ms)
 {
 	unsigned long jiffies = msecs_to_jiffies(timeout_ms);
-	int ret;
+	bool delivered;
+	u32 seqno;
+	int err;
 
 	if (!skb->dev) {
 		kfree_skb(skb);
@@ -1929,34 +1942,41 @@ int dsa_inband_request(struct dsa_inband *inband, struct sk_buff *skb,
 
 	mutex_lock(&inband->lock);
 
-	inband->err = 0;
+	reinit_completion(&inband->completion);
 
 	spin_lock_bh(&inband->resp_lock);
+	inband->err = 0;
 	inband->resp = resp;
 	inband->resp_len = resp_len;
+	if (insert_seqno)
+		WRITE_ONCE(inband->seqno, inband->seqno + 1);
+	seqno = inband->seqno & inband->seqno_mask;
+	inband->pending = true;
 	spin_unlock_bh(&inband->resp_lock);
 
-	if (insert_seqno) {
-		WRITE_ONCE(inband->seqno, inband->seqno + 1);
-		insert_seqno(skb, inband->seqno & inband->seqno_mask);
-	}
-
-	reinit_completion(&inband->completion);
+	if (insert_seqno)
+		insert_seqno(skb, seqno);
 
 	dev_queue_xmit(skb);
 
-	ret = wait_for_completion_timeout(&inband->completion, jiffies);
+	wait_for_completion_timeout(&inband->completion, jiffies);
 
+	/* A reply may have been delivered after the wait timed out but before
+	 * the lock was taken; it has been consumed, so don't report a timeout.
+	 */
 	spin_lock_bh(&inband->resp_lock);
+	delivered = !inband->pending;
+	inband->pending = false;
 	inband->resp = NULL;
 	inband->resp_len = 0;
+	err = inband->err;
 	spin_unlock_bh(&inband->resp_lock);
 	mutex_unlock(&inband->lock);
 
-	if (ret == 0)
+	if (!delivered)
 		return -ETIMEDOUT;
 
-	return inband->err;
+	return err;
 }
 EXPORT_SYMBOL_GPL(dsa_inband_request);
 
