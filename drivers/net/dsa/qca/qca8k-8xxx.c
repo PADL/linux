@@ -185,11 +185,6 @@ static void qca8k_rw_reg_ack_handler(struct dsa_switch *ds, struct sk_buff *skb)
 	/* We can ignore odd value, we always round up them in the alloc function. */
 	len *= sizeof(u16);
 
-	/* Make sure the seq match the requested packet. If not, drop. */
-	if (get_unaligned_le32(&mgmt_ethhdr->seq) !=
-	    dsa_inband_seqno(&priv->inband))
-		return;
-
 	if (cmd == MDIO_READ) {
 		u32 *val = &data[0];
 
@@ -213,7 +208,8 @@ static void qca8k_rw_reg_ack_handler(struct dsa_switch *ds, struct sk_buff *skb)
 		}
 	}
 
-	dsa_inband_complete(&priv->inband, data, sizeof(data), err);
+	dsa_inband_complete(&priv->inband, get_unaligned_le32(&mgmt_ethhdr->seq),
+			    data, sizeof(data), err);
 }
 
 static struct sk_buff *qca8k_alloc_mdio_header(enum mdio_cmd cmd, u32 reg, u32 *val,
