@@ -1202,6 +1202,12 @@ int mv88e6xxx_g2_irq_mdio_setup(struct mv88e6xxx_chip *chip,
 		      chip->info->num_internal_phys;
 	int phy, irq;
 
+	/* In RMU-only mode the switch is registered, and its MDIO bus with it,
+	 * before the interrupt domains are set up. Leave the PHYs polled.
+	 */
+	if (!chip->g2_irq.domain)
+		return 0;
+
 	for (phy = phy_start; phy < phy_end; phy++) {
 		irq = irq_find_mapping(chip->g2_irq.domain, phy);
 		if (irq < 0)
