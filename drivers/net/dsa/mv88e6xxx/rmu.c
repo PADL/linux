@@ -95,8 +95,19 @@ static int __mv88e6xxx_rmu_request_retry(struct mv88e6xxx_chip *chip,
 	insert_seqno = edsa ? mv88e6xxx_rmu_fill_seqno_edsa : mv88e6xxx_rmu_fill_seqno_dsa;
 
 	do {
+		struct sk_buff *req;
+
+		/* The previous attempt may still be queued for transmit, so
+		 * stamp each attempt's sequence number into its own copy.
+		 */
+		req = skb_copy(skb, GFP_KERNEL);
+		if (!req) {
+			err = -ENOMEM;
+			break;
+		}
+
 		attempts++;
-		err = dsa_inband_request(&chip->rmu_inband, skb_get(skb),
+		err = dsa_inband_request(&chip->rmu_inband, req,
 					 insert_seqno, resp, resp_len,
 					 timeout_ms);
 		/* a zero-length response is treated as a timeout */
