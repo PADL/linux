@@ -6719,10 +6719,9 @@ static int igb_change_mtu(struct net_device *netdev, int new_mtu)
 {
 	struct igb_adapter *adapter = netdev_priv(netdev);
 	int max_frame = new_mtu + IGB_ETH_PKT_HDR_PAD;
+	int i;
 
 	if (igb_xdp_is_enabled(adapter)) {
-		int i;
-
 		for (i = 0; i < adapter->num_rx_queues; i++) {
 			struct igb_ring *ring = adapter->rx_ring[i];
 
@@ -6732,6 +6731,20 @@ static int igb_change_mtu(struct net_device *netdev, int new_mtu)
 					    max_frame);
 				return -EINVAL;
 			}
+		}
+	}
+
+	/* a bound zero-copy XSK pool, with or without an XDP program, must hold the frame */
+	for (i = 0; i < adapter->num_rx_queues; i++) {
+		struct xsk_buff_pool *pool = xsk_get_pool_from_qid(netdev, i);
+		int frame = max_t(int, max_frame, ETH_FRAME_LEN + ETH_FCS_LEN);
+
+		if (pool && pool->dev &&
+		    frame + IGB_TS_HDR_LEN > igb_xsk_rx_buf_size(pool)) {
+			netdev_warn(netdev,
+				    "Requested MTU size does not fit the XSK buffer of queue %d\n",
+				    i);
+			return -EINVAL;
 		}
 	}
 
