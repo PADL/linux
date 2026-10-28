@@ -305,6 +305,7 @@ struct igb_rx_queue_stats {
 	u64 drops;
 	u64 csum_err;
 	u64 alloc_failed;
+	u64 zc_split_drops;
 };
 
 struct igb_ring_container {
@@ -393,6 +394,7 @@ enum e1000_ring_flags_t {
 	IGB_RING_FLAG_TX_DETECT_HANG,
 	IGB_RING_FLAG_TX_DISABLED,
 	IGB_RING_FLAG_RX_ALLOC_FAILED,
+	IGB_RING_FLAG_RX_ZC_DISCARD,
 };
 
 #define ring_uses_large_buffer(ring) \
