@@ -70,6 +70,7 @@ static const struct pci_device_id igb_pci_tbl[] = {
 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_I210_SGMII), board_82575 },
 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_I210_COPPER_FLASHLESS), board_82575 },
 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_I210_SERDES_FLASHLESS), board_82575 },
+	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_I210_BLANK_NVM), board_82575 },
 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_I350_COPPER), board_82575 },
 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_I350_FIBER), board_82575 },
 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_I350_SERDES), board_82575 },
@@ -3378,6 +3379,11 @@ static int igb_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	switch (hw->mac.type) {
 	case e1000_i210:
 	case e1000_i211:
+		if (pdev->device == E1000_DEV_ID_I210_BLANK_NVM) {
+			dev_warn(&pdev->dev,
+				 "I210 with unprogrammed NVM: running with hardware defaults\n");
+			break;
+		}
 		if (igb_get_flash_presence_i210(hw)) {
 			if (hw->nvm.ops.validate(hw) < 0) {
 				dev_err(&pdev->dev,
@@ -3404,6 +3410,12 @@ static int igb_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	eth_hw_addr_set(netdev, hw->mac.addr);
 
+	if (!is_valid_ether_addr(netdev->dev_addr) &&
+	    pdev->device == E1000_DEV_ID_I210_BLANK_NVM) {
+		eth_hw_addr_random(netdev);
+		dev_warn(&pdev->dev, "I210 with unprogrammed NVM: using random MAC %pM\n",
+			 netdev->dev_addr);
+	}
 	if (!is_valid_ether_addr(netdev->dev_addr)) {
 		dev_err(&pdev->dev, "Invalid MAC Address\n");
 		err = -EIO;
