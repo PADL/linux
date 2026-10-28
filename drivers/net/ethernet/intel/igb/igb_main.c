@@ -4802,6 +4802,7 @@ void igb_configure_rx_ring(struct igb_adapter *adapter,
 
 	xdp_rxq_info_unreg_mem_model(&ring->xdp_rxq);
 	WRITE_ONCE(ring->xsk_pool, igb_xsk_pool(adapter, ring));
+	clear_bit(IGB_RING_FLAG_RX_ZC_DISCARD, &ring->flags);
 	if (ring->xsk_pool) {
 		WARN_ON(xdp_rxq_info_reg_mem_model(&ring->xdp_rxq,
 						   MEM_TYPE_XSK_BUFF_POOL,

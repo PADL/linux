@@ -350,6 +350,25 @@ out_failure:
 	return result;
 }
 
+/* A frame spanning descriptors would reach XDP cut to its first buffer:
+ * drop every descriptor of it and count the frame once.
+ */
+static void igb_discard_zc(struct igb_ring *rx_ring,
+			   union e1000_adv_rx_desc *rx_desc)
+{
+	if (igb_test_staterr(rx_desc, E1000_RXD_STAT_EOP)) {
+		clear_bit(IGB_RING_FLAG_RX_ZC_DISCARD, &rx_ring->flags);
+		return;
+	}
+	if (test_and_set_bit(IGB_RING_FLAG_RX_ZC_DISCARD, &rx_ring->flags))
+		return;
+
+	u64_stats_update_begin(&rx_ring->rx_syncp);
+	rx_ring->rx_stats.zc_split_drops++;
+	u64_stats_update_end(&rx_ring->rx_syncp);
+	dev_core_stats_rx_dropped_inc(rx_ring->netdev);
+}
+
 int igb_clean_rx_irq_zc(struct igb_q_vector *q_vector,
 			struct xsk_buff_pool *xsk_pool, const int budget)
 {
@@ -359,6 +378,7 @@ int igb_clean_rx_irq_zc(struct igb_q_vector *q_vector,
 	u32 ntc = rx_ring->next_to_clean;
 	struct bpf_prog *xdp_prog;
 	unsigned int xdp_xmit = 0;
+	unsigned int discarded = 0;
 	bool failure = false;
 	u16 entries_to_alloc;
 	struct sk_buff *skb;
@@ -366,7 +386,7 @@ int igb_clean_rx_irq_zc(struct igb_q_vector *q_vector,
 	/* xdp_prog cannot be NULL in the ZC path */
 	xdp_prog = READ_ONCE(rx_ring->xdp_prog);
 
-	while (likely(total_packets < budget)) {
+	while (likely(total_packets + discarded < budget)) {
 		union e1000_adv_rx_desc *rx_desc;
 		ktime_t timestamp = 0;
 		struct xdp_buff *xdp;
@@ -385,6 +405,19 @@ int igb_clean_rx_irq_zc(struct igb_q_vector *q_vector,
 		dma_rmb();
 
 		xdp = rx_ring->rx_buffer_info_zc[ntc];
+
+		if (unlikely(!igb_test_staterr(rx_desc, E1000_RXD_STAT_EOP) ||
+			     test_bit(IGB_RING_FLAG_RX_ZC_DISCARD,
+				      &rx_ring->flags))) {
+			igb_discard_zc(rx_ring, rx_desc);
+			xsk_buff_free(xdp);
+			discarded++;
+			ntc++;
+			if (ntc == rx_ring->count)
+				ntc = 0;
+			continue;
+		}
+
 		xsk_buff_set_size(xdp, size);
 		xsk_buff_dma_sync_for_cpu(xdp);
 
@@ -469,9 +502,9 @@ int igb_clean_rx_irq_zc(struct igb_q_vector *q_vector,
 		else
 			xsk_clear_rx_need_wakeup(xsk_pool);
 
-		return (int)total_packets;
+		return (int)(total_packets + discarded);
 	}
-	return failure ? budget : (int)total_packets;
+	return failure ? budget : (int)(total_packets + discarded);
 }
 
 bool igb_xmit_zc(struct igb_ring *tx_ring, struct xsk_buff_pool *xsk_pool)
