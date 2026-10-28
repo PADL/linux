@@ -871,6 +871,7 @@ int igb_del_mac_steering_filter(struct igb_adapter *adapter,
 
 struct xsk_buff_pool *igb_xsk_pool(struct igb_adapter *adapter,
 				   struct igb_ring *ring);
+u32 igb_xsk_rx_buf_size(struct xsk_buff_pool *pool);
 int igb_xsk_pool_setup(struct igb_adapter *adapter,
 		       struct xsk_buff_pool *pool,
 		       u16 qid);
