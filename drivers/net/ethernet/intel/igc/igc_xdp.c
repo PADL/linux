@@ -69,11 +69,12 @@ static int igc_xdp_enable_pool(struct igc_adapter *adapter,
 		return -EINVAL;
 
 	frame_size = xsk_pool_get_rx_frame_size(pool);
-	if (frame_size < ETH_FRAME_LEN + VLAN_HLEN * 2) {
+	if (rounddown(frame_size, 1024) < ETH_FRAME_LEN + VLAN_HLEN * 2) {
 		/* When XDP is enabled, the driver doesn't support frames that
-		 * span over multiple buffers. To avoid that, we check if xsk
-		 * frame size is big enough to fit the max ethernet frame size
-		 * + vlan double tagging.
+		 * span over multiple buffers. To avoid that, we check if the
+		 * receive buffer, which SRRCTL.BSIZEPKT sets in 1 KB units
+		 * (rounding the xsk frame size down), is big enough to fit the
+		 * max ethernet frame size + vlan double tagging.
 		 */
 		return -EOPNOTSUPP;
 	}
