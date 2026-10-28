@@ -94,6 +94,13 @@ struct xsk_buff_pool *igb_xsk_pool(struct igb_adapter *adapter,
 	return (pool && pool->dev) ? pool : NULL;
 }
 
+/* SRRCTL.BSIZEPACKET is in 1 KiB units: the buffer a frame must fit */
+u32 igb_xsk_rx_buf_size(struct xsk_buff_pool *pool)
+{
+	return ALIGN_DOWN(xsk_pool_get_rx_frame_size(pool),
+			  BIT(E1000_SRRCTL_BSIZEPKT_SHIFT));
+}
+
 static int igb_xsk_pool_enable(struct igb_adapter *adapter,
 			       struct xsk_buff_pool *pool,
 			       u16 qid)
@@ -109,6 +116,11 @@ static int igb_xsk_pool_enable(struct igb_adapter *adapter,
 	if (qid >= netdev->real_num_rx_queues ||
 	    qid >= netdev->real_num_tx_queues)
 		return -EINVAL;
+
+	if (igb_xsk_rx_buf_size(pool) < adapter->max_frame_size + IGB_TS_HDR_LEN) {
+		netdev_err(netdev, "XSK buffer is too small for the MTU\n");
+		return -EINVAL;
+	}
 
 	err = xsk_pool_dma_map(pool, &adapter->pdev->dev, IGB_RX_DMA_ATTR);
 	if (err)

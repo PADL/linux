@@ -6727,7 +6727,10 @@ static int igb_change_mtu(struct net_device *netdev, int new_mtu)
 		for (i = 0; i < adapter->num_rx_queues; i++) {
 			struct igb_ring *ring = adapter->rx_ring[i];
 
-			if (max_frame > igb_rx_bufsz(ring)) {
+			if (max_frame > igb_rx_bufsz(ring) ||
+			    (ring->xsk_pool &&
+			     max_frame + IGB_TS_HDR_LEN >
+			     igb_xsk_rx_buf_size(ring->xsk_pool))) {
 				netdev_warn(adapter->netdev,
 					    "Requested MTU size is not supported with XDP. Max frame size is %d\n",
 					    max_frame);
