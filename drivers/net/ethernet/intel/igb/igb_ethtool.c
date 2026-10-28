@@ -2335,6 +2335,7 @@ static void igb_get_ethtool_stats(struct net_device *netdev,
 			data[i+2] = ring->rx_stats.drops;
 			data[i+3] = ring->rx_stats.csum_err;
 			data[i+4] = ring->rx_stats.alloc_failed;
+			data[i+5] = ring->rx_stats.zc_split_drops;
 		} while (u64_stats_fetch_retry(&ring->rx_syncp, start));
 		i += IGB_RX_QUEUE_STATS_LEN;
 	}
@@ -2367,6 +2368,7 @@ static void igb_get_strings(struct net_device *netdev, u32 stringset, u8 *data)
 			ethtool_sprintf(&p, "rx_queue_%u_drops", i);
 			ethtool_sprintf(&p, "rx_queue_%u_csum_err", i);
 			ethtool_sprintf(&p, "rx_queue_%u_alloc_failed", i);
+			ethtool_sprintf(&p, "rx_queue_%u_zc_split_drops", i);
 		}
 		/* BUG_ON(p - data != IGB_STATS_LEN * ETH_GSTRING_LEN); */
 		break;
