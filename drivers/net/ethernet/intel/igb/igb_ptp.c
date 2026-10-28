@@ -528,10 +528,12 @@ static int igb_ptp_feature_enable_82580(struct ptp_clock_info *ptp,
 			igb_pin_extts(igb, rq->extts.index, pin);
 			tsauxc |= tsauxc_mask;
 			tsim |= tsim_mask;
+			igb->extts_pin[rq->extts.index] = pin;
 		} else {
 			tsauxc &= ~tsauxc_mask;
 			tsim &= ~tsim_mask;
 		}
+		igb->extts_enabled[rq->extts.index] = !!on;
 		wr32(E1000_TSAUXC, tsauxc);
 		wr32(E1000_TSIM, tsim);
 		spin_unlock_irqrestore(&igb->tmreg_lock, flags);
@@ -677,10 +679,12 @@ static int igb_ptp_feature_enable_i210(struct ptp_clock_info *ptp,
 			igb_pin_extts(igb, rq->extts.index, pin);
 			tsauxc |= tsauxc_mask;
 			tsim |= tsim_mask;
+			igb->extts_pin[rq->extts.index] = pin;
 		} else {
 			tsauxc &= ~tsauxc_mask;
 			tsim &= ~tsim_mask;
 		}
+		igb->extts_enabled[rq->extts.index] = !!on;
 		wr32(E1000_TSAUXC, tsauxc);
 		wr32(E1000_TSIM, tsim);
 		spin_unlock_irqrestore(&igb->tmreg_lock, flags);
@@ -748,6 +752,8 @@ static int igb_ptp_feature_enable_i210(struct ptp_clock_info *ptp,
 			igb->perout[i].start.tv_nsec = rq->perout.start.nsec;
 			igb->perout[i].period.tv_sec = ts.tv_sec;
 			igb->perout[i].period.tv_nsec = ts.tv_nsec;
+			igb->perout_pin[i] = pin;
+			igb->perout_use_freq[i] = use_freq;
 			wr32(trgttimh, rq->perout.start.sec);
 			wr32(trgttiml, rq->perout.start.nsec);
 			if (use_freq)
@@ -755,6 +761,7 @@ static int igb_ptp_feature_enable_i210(struct ptp_clock_info *ptp,
 			tsauxc |= tsauxc_mask;
 			tsim |= tsim_mask;
 		}
+		igb->perout_enabled[rq->perout.index] = !!on;
 		wr32(E1000_TSAUXC, tsauxc);
 		wr32(E1000_TSIM, tsim);
 		spin_unlock_irqrestore(&igb->tmreg_lock, flags);
@@ -1464,6 +1471,96 @@ void igb_ptp_stop(struct igb_adapter *adapter)
 }
 
 /**
+ * igb_ptp_restore_extts - Re-arm the EXTTS channels after a reset.
+ * @adapter: Board private structure.
+ *
+ * The reset cleared TSAUXC, TSSDP, TSIM and the SDP direction bits, but
+ * the PTP core (and the application that enabled the channels) still
+ * believe they are armed, so without this they never fire again.
+ * Called with tmreg_lock held, after TSAUXC/TSSDP/TSIM were rewritten.
+ **/
+static void igb_ptp_restore_extts(struct igb_adapter *adapter)
+{
+	struct e1000_hw *hw = &adapter->hw;
+	u32 tsauxc, tsim;
+	int i;
+
+	tsauxc = rd32(E1000_TSAUXC);
+	tsim = rd32(E1000_TSIM);
+	for (i = 0; i < IGB_N_EXTTS; i++) {
+		if (!adapter->extts_enabled[i])
+			continue;
+		igb_pin_extts(adapter, i, adapter->extts_pin[i]);
+		tsauxc |= i == 1 ? TSAUXC_EN_TS1 : TSAUXC_EN_TS0;
+		tsim |= i == 1 ? TSINTR_AUTT1 : TSINTR_AUTT0;
+	}
+	wr32(E1000_TSAUXC, tsauxc);
+	wr32(E1000_TSIM, tsim);
+}
+
+/**
+ * igb_ptp_restore_perout_i210 - Restart the periodic outputs after a reset.
+ * @adapter: Board private structure.
+ *
+ * As for the EXTTS channels, the reset cleared the outputs' TSAUXC,
+ * TSSDP and TSIM bits while the PTP core believes them running. Each is
+ * restarted at the first instant after now (plus a margin) that keeps its
+ * phase modulo the full period, against SYSTIM as re-initialized: in
+ * clock (FREQOUT) mode the pulse train resumes as it was; in target-time
+ * mode igb_perout() keeps toggling from there, though the pin's level
+ * after the reset may leave the pulse inverted. i210/i211 only (the
+ * 82580 family programs its outputs in timecounter units). Called with
+ * tmreg_lock held, after SYSTIM was written.
+ **/
+static void igb_ptp_restore_perout_i210(struct igb_adapter *adapter)
+{
+	static const u32 trgttiml[IGB_N_PEROUT] = { E1000_TRGTTIML0, E1000_TRGTTIML1 };
+	static const u32 trgttimh[IGB_N_PEROUT] = { E1000_TRGTTIMH0, E1000_TRGTTIMH1 };
+	static const u32 freqout[IGB_N_PEROUT] = { E1000_FREQOUT0, E1000_FREQOUT1 };
+	struct e1000_hw *hw = &adapter->hw;
+	struct timespec64 now;
+	u32 tsauxc, tsim;
+	int i;
+
+	igb_ptp_read_i210(adapter, &now);
+	tsauxc = rd32(E1000_TSAUXC);
+	tsim = rd32(E1000_TSIM);
+	for (i = 0; i < IGB_N_PEROUT; i++) {
+		s64 half, period, next, d;
+		struct timespec64 start;
+
+		if (!adapter->perout_enabled[i])
+			continue;
+		half = timespec64_to_ns(&adapter->perout[i].period);
+		period = 2 * half;
+		if (period <= 0)
+			continue;
+		next = timespec64_to_ns(&now) + 10 * NSEC_PER_MSEC;
+		d = timespec64_to_ns(&adapter->perout[i].start) - next;
+		d -= div64_s64(d, period) * period;
+		if (d < 0)
+			d += period;
+		start = ns_to_timespec64(next + d);
+		adapter->perout[i].start = start;
+
+		igb_pin_perout(adapter, i, adapter->perout_pin[i],
+			       adapter->perout_use_freq[i]);
+		wr32(trgttimh[i], (u32)start.tv_sec);
+		wr32(trgttiml[i], start.tv_nsec);
+		if (adapter->perout_use_freq[i]) {
+			wr32(freqout[i], half);
+			tsauxc |= i == 1 ? (TSAUXC_EN_CLK1 | TSAUXC_ST1) :
+					   (TSAUXC_EN_CLK0 | TSAUXC_ST0);
+		} else {
+			tsauxc |= i == 1 ? TSAUXC_EN_TT1 : TSAUXC_EN_TT0;
+			tsim |= i == 1 ? TSINTR_TT1 : TSINTR_TT0;
+		}
+	}
+	wr32(E1000_TSAUXC, tsauxc);
+	wr32(E1000_TSIM, tsim);
+}
+
+/**
  * igb_ptp_reset - Re-enable the adapter for PTP following a reset.
  * @adapter: Board private structure.
  *
@@ -1495,6 +1592,7 @@ void igb_ptp_reset(struct igb_adapter *adapter)
 		     TSYNC_INTERRUPTS |
 		     (adapter->pps_sys_wrap_on ? TSINTR_SYS_WRAP : 0));
 		wr32(E1000_IMS, E1000_IMS_TS);
+		igb_ptp_restore_extts(adapter);
 		break;
 	default:
 		/* No work to do. */
@@ -1506,6 +1604,7 @@ void igb_ptp_reset(struct igb_adapter *adapter)
 		struct timespec64 ts = ktime_to_timespec64(ktime_get_real());
 
 		igb_ptp_write_i210(adapter, &ts);
+		igb_ptp_restore_perout_i210(adapter);
 	} else {
 		timecounter_init(&adapter->tc, &adapter->cc,
 				 ktime_to_ns(ktime_get_real()));
