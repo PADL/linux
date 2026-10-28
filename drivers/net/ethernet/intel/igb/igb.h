@@ -640,6 +640,19 @@ struct igb_adapter {
 	bool pps_sys_wrap_on;
 
 	struct ptp_pin_desc sdp_config[IGB_N_SDP];
+	/* EXTTS channels enabled through the PTP core, and their SDP pins,
+	 * so igb_ptp_reset() can re-arm them: a reset clears TSAUXC, TSSDP,
+	 * TSIM and the SDP direction bits, while the PTP core still
+	 * believes the channels are enabled.
+	 */
+	bool extts_enabled[IGB_N_EXTTS];
+	u8 extts_pin[IGB_N_EXTTS];
+	/* The same for the i210's periodic outputs (perout[] keeps the
+	 * next start and the half period beside them).
+	 */
+	bool perout_enabled[IGB_N_PEROUT];
+	bool perout_use_freq[IGB_N_PEROUT];
+	u8 perout_pin[IGB_N_PEROUT];
 	struct {
 		struct timespec64 start;
 		struct timespec64 period;
