@@ -4077,6 +4077,7 @@ static int igb_sw_init(struct igb_adapter *adapter)
 
 	spin_lock_init(&adapter->nfc_lock);
 	spin_lock_init(&adapter->stats64_lock);
+	spin_lock_init(&adapter->ptp_tx_lock);
 
 	/* init spinlock to avoid concurrency of VF resources */
 	spin_lock_init(&adapter->vfs_lock);
@@ -6576,10 +6577,11 @@ netdev_tx_t igb_xmit_frame_ring(struct sk_buff *skb,
 
 	if (unlikely(skb_shinfo(skb)->tx_flags & SKBTX_HW_TSTAMP)) {
 		struct igb_adapter *adapter = netdev_priv(tx_ring->netdev);
+		unsigned long flags;
 
+		spin_lock_irqsave(&adapter->ptp_tx_lock, flags);
 		if (adapter->tstamp_config.tx_type == HWTSTAMP_TX_ON &&
-		    !test_and_set_bit_lock(__IGB_PTP_TX_IN_PROGRESS,
-					   &adapter->state)) {
+		    !adapter->ptp_tx_skb) {
 			skb_shinfo(skb)->tx_flags |= SKBTX_IN_PROGRESS;
 			tx_flags |= IGB_TX_FLAGS_TSTAMP;
 
@@ -6590,6 +6592,7 @@ netdev_tx_t igb_xmit_frame_ring(struct sk_buff *skb,
 		} else {
 			adapter->tx_hwtstamp_skipped++;
 		}
+		spin_unlock_irqrestore(&adapter->ptp_tx_lock, flags);
 	}
 
 	if (skb_vlan_tag_present(skb)) {
@@ -6618,12 +6621,15 @@ out_drop:
 cleanup_tx_tstamp:
 	if (unlikely(tx_flags & IGB_TX_FLAGS_TSTAMP)) {
 		struct igb_adapter *adapter = netdev_priv(tx_ring->netdev);
+		unsigned long flags;
 
-		dev_kfree_skb_any(adapter->ptp_tx_skb);
-		adapter->ptp_tx_skb = NULL;
-		if (adapter->hw.mac.type == e1000_82576)
-			cancel_work_sync(&adapter->ptp_tx_work);
-		clear_bit_unlock(__IGB_PTP_TX_IN_PROGRESS, &adapter->state);
+		/* The 82576 poll work finds the slot empty and stops. */
+		spin_lock_irqsave(&adapter->ptp_tx_lock, flags);
+		if (adapter->ptp_tx_skb == skb) {
+			dev_kfree_skb_any(adapter->ptp_tx_skb);
+			adapter->ptp_tx_skb = NULL;
+		}
+		spin_unlock_irqrestore(&adapter->ptp_tx_lock, flags);
 	}
 
 	return NETDEV_TX_OK;
@@ -7093,7 +7099,10 @@ static void igb_tsync_interrupt(struct igb_adapter *adapter)
 
 	if (tsicr & E1000_TSICR_TXTS) {
 		/* retrieve hardware timestamp */
-		schedule_work(&adapter->ptp_tx_work);
+		if (hw->mac.type == e1000_i210 || hw->mac.type == e1000_i211)
+			igb_ptp_tx_tstamp_event(adapter);
+		else
+			schedule_work(&adapter->ptp_tx_work);
 	}
 
 	if (tsicr & TSINTR_TT0)
