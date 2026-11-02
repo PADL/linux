@@ -454,12 +454,19 @@ static int igc_tsn_enable_offload(struct igc_adapter *adapter)
 {
 	struct igc_hw *hw = &adapter->hw;
 	u32 tqavctrl, baset_l, baset_h;
-	u32 sec, nsec, cycle;
+	u32 sec, nsec, cycle, tsauxc;
 	ktime_t base_time, systim;
+	unsigned long flags;
 	u32 frag_size_mult;
 	int i;
 
-	wr32(IGC_TSAUXC, 0);
+	/* Keep SYSTIM0 counting without disarming the auxiliary timestamps
+	 * and periodic outputs enabled through the PTP clock.
+	 */
+	spin_lock_irqsave(&adapter->tmreg_lock, flags);
+	tsauxc = rd32(IGC_TSAUXC);
+	wr32(IGC_TSAUXC, tsauxc & ~IGC_TSAUXC_DISABLE0);
+	spin_unlock_irqrestore(&adapter->tmreg_lock, flags);
 	wr32(IGC_DTXMXPKTSZ, IGC_DTXMXPKTSZ_TSN);
 	wr32(IGC_TXPBS, IGC_TXPBSIZE_TSN);
 
