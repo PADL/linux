@@ -335,6 +335,20 @@ struct igc_adapter {
 	bool pps_sys_wrap_on;
 
 	struct ptp_pin_desc sdp_config[IGC_N_SDP];
+	/* EXTTS channels and periodic outputs enabled through the PTP core,
+	 * and their SDP pins, so igc_ptp_reset() can re-arm them: a reset
+	 * clears TSAUXC, TSSDP, TSIM and the SDP direction bits, while the
+	 * PTP core still believes the channels are enabled.
+	 */
+	bool extts_enabled[IGC_N_EXTTS];
+	u8 extts_pin[IGC_N_EXTTS];
+	bool perout_enabled[IGC_N_PEROUT];
+	bool perout_use_freq[IGC_N_PEROUT];
+	u8 perout_pin[IGC_N_PEROUT];
+	/* The first edge as programmed: perout[].start advances in
+	 * target-time mode, and only this keeps the restarted output's phase.
+	 */
+	struct timespec64 perout_phase[IGC_N_PEROUT];
 	struct {
 		struct timespec64 start;
 		struct timespec64 period;
