@@ -283,10 +283,12 @@ static int igc_ptp_feature_enable_i225(struct ptp_clock_info *ptp,
 			igc_pin_extts(igc, rq->extts.index, pin);
 			tsauxc |= tsauxc_mask;
 			tsim |= tsim_mask;
+			igc->extts_pin[rq->extts.index] = pin;
 		} else {
 			tsauxc &= ~tsauxc_mask;
 			tsim &= ~tsim_mask;
 		}
+		igc->extts_enabled[rq->extts.index] = !!on;
 		wr32(IGC_TSAUXC, tsauxc);
 		wr32(IGC_TSIM, tsim);
 		spin_unlock_irqrestore(&igc->tmreg_lock, flags);
@@ -371,6 +373,9 @@ static int igc_ptp_feature_enable_i225(struct ptp_clock_info *ptp,
 			igc->perout[i].start.tv_nsec = rq->perout.start.nsec;
 			igc->perout[i].period.tv_sec = ts.tv_sec;
 			igc->perout[i].period.tv_nsec = ts.tv_nsec;
+			igc->perout_pin[i] = pin;
+			igc->perout_phase[i] = igc->perout[i].start;
+			igc->perout_use_freq[i] = use_freq;
 			wr32(trgttimh, (u32)igc->perout[i].start.tv_sec);
 			/* For now, always select timer 0 as source. */
 			wr32(trgttiml, (u32)(igc->perout[i].start.tv_nsec |
@@ -380,6 +385,7 @@ static int igc_ptp_feature_enable_i225(struct ptp_clock_info *ptp,
 			tsauxc |= tsauxc_mask;
 			tsim |= tsim_mask;
 		}
+		igc->perout_enabled[rq->perout.index] = !!on;
 		wr32(IGC_TSAUXC, tsauxc);
 		wr32(IGC_TSIM, tsim);
 		spin_unlock_irqrestore(&igc->tmreg_lock, flags);
@@ -1303,6 +1309,98 @@ void igc_ptp_stop(struct igc_adapter *adapter)
 }
 
 /**
+ * igc_ptp_restore_extts - Re-arm the EXTTS channels after a reset.
+ * @adapter: Board private structure.
+ *
+ * The reset cleared TSAUXC, TSSDP, TSIM and the SDP direction bits, but
+ * the PTP core (and the application that enabled the channels) still
+ * believe they are armed, so without this they never fire again.
+ * Called with tmreg_lock held, after TSAUXC/TSSDP/TSIM were rewritten.
+ **/
+static void igc_ptp_restore_extts(struct igc_adapter *adapter)
+{
+	struct igc_hw *hw = &adapter->hw;
+	u32 tsauxc, tsim;
+	int i;
+
+	lockdep_assert_held(&adapter->tmreg_lock);
+	tsauxc = rd32(IGC_TSAUXC);
+	tsim = rd32(IGC_TSIM);
+	for (i = 0; i < IGC_N_EXTTS; i++) {
+		if (!adapter->extts_enabled[i])
+			continue;
+		igc_pin_extts(adapter, i, adapter->extts_pin[i]);
+		tsauxc |= i == 1 ? IGC_TSAUXC_EN_TS1 : IGC_TSAUXC_EN_TS0;
+		tsim |= i == 1 ? IGC_TSICR_AUTT1 : IGC_TSICR_AUTT0;
+	}
+	wr32(IGC_TSAUXC, tsauxc);
+	wr32(IGC_TSIM, tsim);
+}
+
+/**
+ * igc_ptp_restore_perout - Restart the periodic outputs after a reset.
+ * @adapter: Board private structure.
+ *
+ * As for the EXTTS channels, the reset cleared the outputs' TSAUXC,
+ * TSSDP and TSIM bits while the PTP core believes them running. Each is
+ * restarted at its programmed first edge if that is still ahead, else at
+ * the first instant after now plus the enable path's 2 s margin that keeps
+ * its phase modulo the full period, against SYSTIM as restored. Called
+ * with tmreg_lock held, after SYSTIM was written.
+ **/
+static void igc_ptp_restore_perout(struct igc_adapter *adapter)
+{
+	static const u32 trgttiml[IGC_N_PEROUT] = { IGC_TRGTTIML0, IGC_TRGTTIML1 };
+	static const u32 trgttimh[IGC_N_PEROUT] = { IGC_TRGTTIMH0, IGC_TRGTTIMH1 };
+	static const u32 freqout[IGC_N_PEROUT] = { IGC_FREQOUT0, IGC_FREQOUT1 };
+	struct igc_hw *hw = &adapter->hw;
+	struct timespec64 now;
+	u32 tsauxc, tsim;
+	int i;
+
+	lockdep_assert_held(&adapter->tmreg_lock);
+	igc_ptp_read(adapter, &now);
+	tsauxc = rd32(IGC_TSAUXC);
+	tsim = rd32(IGC_TSIM);
+	for (i = 0; i < IGC_N_PEROUT; i++) {
+		s64 half, period, next, d;
+		struct timespec64 start;
+
+		if (!adapter->perout_enabled[i])
+			continue;
+		half = timespec64_to_ns(&adapter->perout[i].period);
+		period = 2 * half;
+		if (period <= 0)
+			continue;
+		next = timespec64_to_ns(&now) + 2 * NSEC_PER_SEC;
+		d = timespec64_to_ns(&adapter->perout_phase[i]) - next;
+		if (d < 0) {
+			d -= div64_s64(d, period) * period;
+			if (d < 0)
+				d += period;
+		}
+		start = ns_to_timespec64(next + d);
+		adapter->perout[i].start = start;
+
+		igc_pin_perout(adapter, i, adapter->perout_pin[i],
+			       adapter->perout_use_freq[i]);
+		wr32(trgttimh[i], (u32)start.tv_sec);
+		wr32(trgttiml[i], (u32)(start.tv_nsec |
+					IGC_TT_IO_TIMER_SEL_SYSTIM0));
+		if (adapter->perout_use_freq[i]) {
+			wr32(freqout[i], half);
+			tsauxc |= i == 1 ? (IGC_TSAUXC_EN_CLK1 | IGC_TSAUXC_ST1) :
+					   (IGC_TSAUXC_EN_CLK0 | IGC_TSAUXC_ST0);
+		} else {
+			tsauxc |= i == 1 ? IGC_TSAUXC_EN_TT1 : IGC_TSAUXC_EN_TT0;
+			tsim |= i == 1 ? IGC_TSICR_TT1 : IGC_TSICR_TT0;
+		}
+	}
+	wr32(IGC_TSAUXC, tsauxc);
+	wr32(IGC_TSIM, tsim);
+}
+
+/**
  * igc_ptp_reset - Re-enable the adapter for PTP following a reset.
  * @adapter: Board private structure.
  *
@@ -1373,6 +1471,8 @@ void igc_ptp_reset(struct igc_adapter *adapter)
 	/* Re-initialize the timer. */
 	if (hw->mac.type == igc_i225) {
 		igc_ptp_time_restore(adapter);
+		igc_ptp_restore_extts(adapter);
+		igc_ptp_restore_perout(adapter);
 	} else {
 		timecounter_init(&adapter->tc, &adapter->cc,
 				 ktime_to_ns(ktime_get_real()));
