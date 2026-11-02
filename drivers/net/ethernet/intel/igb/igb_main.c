@@ -3413,6 +3413,7 @@ static int igb_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	if (!is_valid_ether_addr(netdev->dev_addr) &&
 	    pdev->device == E1000_DEV_ID_I210_BLANK_NVM) {
 		eth_hw_addr_random(netdev);
+		ether_addr_copy(hw->mac.addr, netdev->dev_addr);
 		dev_warn(&pdev->dev, "I210 with unprogrammed NVM: using random MAC %pM\n",
 			 netdev->dev_addr);
 	}
