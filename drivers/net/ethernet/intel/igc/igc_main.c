@@ -1209,7 +1209,8 @@ static __le32 igc_tx_launchtime(struct igc_ring *ring, ktime_t txtime,
 	 * considering software update the tail pointer and packets
 	 * are dma'ed to packet buffer.
 	 */
-	if ((ktime_sub_ns(end_of_cycle, now) < 5 * NSEC_PER_USEC))
+	if (ktime_sub_ns(end_of_cycle, now) < 5 * NSEC_PER_USEC &&
+	    net_ratelimit())
 		netdev_warn(ring->netdev, "Packet with txtime=%llu may not be honoured\n",
 			    txtime);
 
