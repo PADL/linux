@@ -556,6 +556,7 @@ enum igc_state_t {
 	__IGC_TESTING,
 	__IGC_RESETTING,
 	__IGC_DOWN,
+	__IGC_QBV_RESET_PENDING,
 };
 
 enum igc_tx_flags {
