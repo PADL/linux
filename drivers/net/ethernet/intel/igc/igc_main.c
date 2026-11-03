@@ -1090,7 +1090,7 @@ static ktime_t igc_skb_txtime_now(struct igc_adapter *adapter,
 	unsigned long flags;
 	clockid_t clockid;
 
-	if (!*txtime || !sk || !sk_fullsock(sk))
+	if (!sk || !sk_fullsock(sk))
 		return ktime_get_clocktai();
 	if (sk->sk_family != AF_XDP && !sock_flag(sk, SOCK_TXTIME))
 		return ktime_get_clocktai();
@@ -1706,6 +1706,10 @@ static netdev_tx_t igc_xmit_frame_ring(struct sk_buff *skb,
 
 	txtime = skb->tstamp;
 	skb->tstamp = ktime_set(0, 0);
+	/* No launch time: offset 0, sent at once, no cycle recorded. */
+	if (!txtime)
+		goto done;
+
 	now = igc_skb_txtime_now(adapter, skb, &txtime);
 	launch_time = igc_tx_launchtime(tx_ring, txtime, now, &first_flag,
 					&insert_empty);
