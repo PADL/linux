@@ -1042,13 +1042,34 @@ static int igc_write_mc_addr_list(struct net_device *netdev)
 	return netdev_mc_count(netdev);
 }
 
+/* SYSTIM now. The first call reads the register; later calls add the
+ * CLOCK_MONOTONIC time since, which avoids a register read per packet.
+ */
+static ktime_t igc_tx_clock_now(struct igc_adapter *adapter,
+				struct igc_tx_clock *clock)
+{
+	struct timespec64 ts;
+	unsigned long flags;
+
+	if (!clock->mono) {
+		spin_lock_irqsave(&adapter->tmreg_lock, flags);
+		clock->mono = ktime_get();
+		igc_ptp_read(adapter, &ts);
+		spin_unlock_irqrestore(&adapter->tmreg_lock, flags);
+		clock->systim = timespec64_to_ktime(ts);
+	}
+
+	return ktime_add(clock->systim, ktime_sub(ktime_get(), clock->mono));
+}
+
+/* @now is in @txtime's clock: the Qbv cycle is estimated from it. */
 static __le32 igc_tx_launchtime(struct igc_ring *ring, ktime_t txtime,
-				bool *first_flag, bool *insert_empty)
+				ktime_t now, bool *first_flag,
+				bool *insert_empty)
 {
 	struct igc_adapter *adapter = netdev_priv(ring->netdev);
 	ktime_t cycle_time = adapter->cycle_time;
 	ktime_t base_time = adapter->base_time;
-	ktime_t now = ktime_get_clocktai();
 	ktime_t baset_est, end_of_cycle;
 	s32 launchtime;
 	s64 n;
@@ -1635,7 +1656,8 @@ static netdev_tx_t igc_xmit_frame_ring(struct sk_buff *skb,
 
 	txtime = skb->tstamp;
 	skb->tstamp = ktime_set(0, 0);
-	launch_time = igc_tx_launchtime(tx_ring, txtime, &first_flag, &insert_empty);
+	launch_time = igc_tx_launchtime(tx_ring, txtime, ktime_get_clocktai(),
+					&first_flag, &insert_empty);
 
 	if (insert_empty) {
 		/* Reset the launch time if the required empty frame fails to
@@ -3000,12 +3022,14 @@ static void igc_xsk_request_launch_time(u64 launch_time, void *_priv)
 	bool insert_empty = false;
 	bool first_flag = false;
 	u16 used_desc = 0;
+	ktime_t now;
 
 	if (!tx_ring->launchtime_enable)
 		return;
 
+	now = igc_tx_clock_now(netdev_priv(tx_ring->netdev), meta_req->clock);
 	launch_time_offset = igc_tx_launchtime(tx_ring,
-					       ns_to_ktime(launch_time),
+					       ns_to_ktime(launch_time), now,
 					       &first_flag, &insert_empty);
 	if (insert_empty) {
 		/* Disregard the launch time request if the required empty frame
@@ -3041,6 +3065,7 @@ static void igc_xdp_xmit_zc(struct igc_ring *ring)
 	struct xsk_buff_pool *pool = ring->xsk_pool;
 	struct netdev_queue *nq = txring_txq(ring);
 	union igc_adv_tx_desc *tx_desc = NULL;
+	struct igc_tx_clock clock = {};
 	int cpu = smp_processor_id();
 	struct xdp_desc xdp_desc;
 	u16 budget, ntu;
@@ -3083,6 +3108,7 @@ static void igc_xdp_xmit_zc(struct igc_ring *ring)
 		meta_req.tx_ring = ring;
 		meta_req.tx_buffer = bi;
 		meta_req.meta = meta;
+		meta_req.clock = &clock;
 		meta_req.used_desc = 0;
 		xsk_tx_metadata_request(pool, &meta, &igc_xsk_tx_metadata_ops,
 					&meta_req);
