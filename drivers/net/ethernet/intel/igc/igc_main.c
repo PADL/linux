@@ -1183,13 +1183,18 @@ static ktime_t igc_skb_txtime_now(struct igc_adapter *adapter,
 	return ktime_add(igc_tx_clock_read(clockid), offset);
 }
 
+/* From the time igc_tx_launchtime() reads now to the hardware fetching the
+ * packet: the descriptor writes, the tail update and the DMA.
+ */
+#define IGC_TX_LAUNCH_GUARD_NS	(10 * NSEC_PER_USEC)
+
 /* @now is in @txtime's clock: the Qbv cycle is estimated from it. */
 static __le32 igc_tx_launchtime(struct igc_ring *ring, ktime_t txtime,
 				ktime_t now, bool *first_flag,
 				bool *insert_empty)
 {
 	struct igc_adapter *adapter = netdev_priv(ring->netdev);
-	ktime_t baset_est, end_of_cycle, base_time, cycle_time;
+	ktime_t baset_est, end_of_cycle, base_time, cycle_time, wait;
 	ktime_t switch_time, next_cycle_time;
 	s64 launchtime, n;
 	unsigned int seq;
@@ -1221,6 +1226,20 @@ static __le32 igc_tx_launchtime(struct igc_ring *ring, ktime_t txtime,
 	else
 		next_cycle_time = cycle_time;
 
+	/* So close to the end of the cycle the hardware may fetch the packet
+	 * in this cycle or the next: wait for the next and place it there.
+	 */
+	wait = ktime_sub(end_of_cycle, now);
+	if (wait > 0 &&
+	    wait < min_t(s64, IGC_TX_LAUNCH_GUARD_NS, cycle_time / 4)) {
+		/* Packets queued before this one must not wait with it. */
+		igc_flush_tx_descriptors(ring);
+		ndelay(wait);
+		baset_est = end_of_cycle;
+		cycle_time = next_cycle_time;
+		end_of_cycle = ktime_add_ns(baset_est, cycle_time);
+	}
+
 	if (ktime_compare(txtime, end_of_cycle) >= 0) {
 		if (baset_est != ring->last_ff_cycle) {
 			*first_flag = true;
@@ -1239,16 +1258,6 @@ static __le32 igc_tx_launchtime(struct igc_ring *ring, ktime_t txtime,
 	} else {
 		launchtime = ktime_sub(txtime, baset_est);
 	}
-
-	/* Introducing a window at end of cycle on which packets
-	 * potentially not honor launchtime. Window of 5us chosen
-	 * considering software update the tail pointer and packets
-	 * are dma'ed to packet buffer.
-	 */
-	if (ktime_sub_ns(end_of_cycle, now) < 5 * NSEC_PER_USEC &&
-	    net_ratelimit())
-		netdev_warn(ring->netdev, "Packet with txtime=%lld may not be honoured\n",
-			    txtime);
 
 	ring->last_tx_cycle = end_of_cycle;
 
