@@ -1238,6 +1238,8 @@ static __le32 igc_tx_launchtime(struct igc_ring *ring, ktime_t txtime,
 		baset_est = end_of_cycle;
 		cycle_time = next_cycle_time;
 		end_of_cycle = ktime_add_ns(baset_est, cycle_time);
+	} else {
+		wait = 0;
 	}
 
 	if (ktime_compare(txtime, end_of_cycle) >= 0) {
@@ -1260,6 +1262,10 @@ static __le32 igc_tx_launchtime(struct igc_ring *ring, ktime_t txtime,
 	}
 
 	ring->last_tx_cycle = end_of_cycle;
+
+	netdev_dbg(ring->netdev,
+		   "launch time %lld now %lld cycle %lld first %d empty %d wait %lld\n",
+		   txtime, now, baset_est, *first_flag, *insert_empty, wait);
 
 	if (launchtime <= 0)
 		return 0;
