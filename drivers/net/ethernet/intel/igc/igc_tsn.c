@@ -385,6 +385,109 @@ static void igc_tsn_set_cycle(struct igc_adapter *adapter, ktime_t systim,
 	write_seqcount_end(&adapter->qbv_cycle_seq);
 }
 
+/* Program queue @i's idle slope and hiCredit from its ring. */
+static void igc_tsn_write_cbs(struct igc_adapter *adapter, int i)
+{
+	struct igc_ring *ring = adapter->tx_ring[i];
+	struct igc_hw *hw = &adapter->hw;
+	u16 cbs_value;
+	u32 tqavcc;
+
+	/* According to i225 datasheet section 7.5.2.7, we
+	 * should set the 'idleSlope' field from TQAVCC
+	 * register following the equation:
+	 *
+	 * value = link-speed   0x7736 * BW * 0.2
+	 *         ---------- *  -----------------         (E1)
+	 *          100Mbps            2.5
+	 *
+	 * Note that 'link-speed' is in Mbps.
+	 *
+	 * 'BW' is the percentage bandwidth out of full
+	 * link speed which can be found with the
+	 * following equation. Note that idleSlope here
+	 * is the parameter from this function
+	 * which is in kbps.
+	 *
+	 *     BW =     idleSlope
+	 *          -----------------                      (E2)
+	 *          link-speed * 1000
+	 *
+	 * That said, we can come up with a generic
+	 * equation to calculate the value we should set
+	 * it TQAVCC register by replacing 'BW' in E1 by E2.
+	 * The resulting equation is:
+	 *
+	 * value = link-speed * 0x7736 * idleSlope * 0.2
+	 *         -------------------------------------   (E3)
+	 *             100 * 2.5 * link-speed * 1000
+	 *
+	 * 'link-speed' is present in both sides of the
+	 * fraction so it is canceled out. The final
+	 * equation is the following:
+	 *
+	 *     value = idleSlope * 61036
+	 *             -----------------                   (E4)
+	 *                  2500000
+	 *
+	 * NOTE: For i225, given the above, we can see
+	 *       that idleslope is represented in
+	 *       40.959433 kbps units by the value at
+	 *       the TQAVCC register (2.5Gbps / 61036),
+	 *       which reduces the granularity for
+	 *       idleslope increments.
+	 *
+	 * In i225 controller, the sendSlope and loCredit
+	 * parameters from CBS are not configurable
+	 * by software so we don't do any
+	 * 'controller configuration' in respect to
+	 * these parameters.
+	 */
+	cbs_value = DIV_ROUND_UP_ULL(ring->idleslope * 61036ULL, 2500000);
+
+	tqavcc = rd32(IGC_TQAVCC(i));
+	tqavcc &= ~IGC_TQAVCC_IDLESLOPE_MASK;
+	tqavcc |= cbs_value | IGC_TQAVCC_KEEP_CREDITS;
+	wr32(IGC_TQAVCC(i), tqavcc);
+
+	wr32(IGC_TQAVHC(i), 0x80000000 + ring->hicredit * 0x7736);
+}
+
+/**
+ * igc_tsn_update_cbs - Change a running CBS shaper's slope and credit only
+ * @adapter: Board private structure
+ * @queue: The queue whose cbs changed
+ * @was_enabled: Whether CBS was on for @queue before the change
+ *
+ * A cbs change that leaves the queue shaped and the port in TSN mode needs
+ * only the queue's idle slope and hiCredit, and its TXQCTL written back,
+ * not a rewrite of the other TSN registers (the Qbv cycle, BASET, the
+ * buffer sizes, possibly the arbitration) with traffic running.
+ *
+ * Return: true if done, false if igc_tsn_offload_apply() is needed.
+ */
+bool igc_tsn_update_cbs(struct igc_adapter *adapter, int queue,
+			bool was_enabled)
+{
+	struct igc_hw *hw = &adapter->hw;
+	u32 txqctl;
+
+	if (!was_enabled || !adapter->tx_ring[queue]->cbs_enable ||
+	    !netif_running(adapter->netdev) ||
+	    !igc_tsn_is_tx_mode_in_tsn(adapter))
+		return false;
+
+	/* The hardware must already shape the queue. */
+	txqctl = rd32(IGC_TXQCTL(queue));
+	if (!(txqctl & IGC_TXQCTL_QAV_SEL_MASK))
+		return false;
+
+	igc_tsn_write_cbs(adapter, queue);
+	/* As the full path does after the CBS registers, with the same value. */
+	wr32(IGC_TXQCTL(queue), txqctl);
+	return true;
+}
+
 /* Returns the TSN specific registers to their default values after
  * the adapter is reset.
  */
@@ -526,7 +629,6 @@ static int igc_tsn_enable_offload(struct igc_adapter *adapter)
 		struct igc_ring *ring = adapter->tx_ring[i];
 		u32 txdctl = rd32(IGC_TXDCTL(ring->reg_idx));
 		u32 txqctl = 0;
-		u16 cbs_value;
 		u32 tqavcc;
 
 		wr32(IGC_STQT(i), ring->start_time);
@@ -584,66 +686,7 @@ static int igc_tsn_enable_offload(struct igc_adapter *adapter)
 			else
 				txqctl |= IGC_TXQCTL_QAV_SEL_CBS1;
 
-			/* According to i225 datasheet section 7.5.2.7, we
-			 * should set the 'idleSlope' field from TQAVCC
-			 * register following the equation:
-			 *
-			 * value = link-speed   0x7736 * BW * 0.2
-			 *         ---------- *  -----------------         (E1)
-			 *          100Mbps            2.5
-			 *
-			 * Note that 'link-speed' is in Mbps.
-			 *
-			 * 'BW' is the percentage bandwidth out of full
-			 * link speed which can be found with the
-			 * following equation. Note that idleSlope here
-			 * is the parameter from this function
-			 * which is in kbps.
-			 *
-			 *     BW =     idleSlope
-			 *          -----------------                      (E2)
-			 *          link-speed * 1000
-			 *
-			 * That said, we can come up with a generic
-			 * equation to calculate the value we should set
-			 * it TQAVCC register by replacing 'BW' in E1 by E2.
-			 * The resulting equation is:
-			 *
-			 * value = link-speed * 0x7736 * idleSlope * 0.2
-			 *         -------------------------------------   (E3)
-			 *             100 * 2.5 * link-speed * 1000
-			 *
-			 * 'link-speed' is present in both sides of the
-			 * fraction so it is canceled out. The final
-			 * equation is the following:
-			 *
-			 *     value = idleSlope * 61036
-			 *             -----------------                   (E4)
-			 *                  2500000
-			 *
-			 * NOTE: For i225, given the above, we can see
-			 *       that idleslope is represented in
-			 *       40.959433 kbps units by the value at
-			 *       the TQAVCC register (2.5Gbps / 61036),
-			 *       which reduces the granularity for
-			 *       idleslope increments.
-			 *
-			 * In i225 controller, the sendSlope and loCredit
-			 * parameters from CBS are not configurable
-			 * by software so we don't do any
-			 * 'controller configuration' in respect to
-			 * these parameters.
-			 */
-			cbs_value = DIV_ROUND_UP_ULL(ring->idleslope
-						     * 61036ULL, 2500000);
-
-			tqavcc = rd32(IGC_TQAVCC(i));
-			tqavcc &= ~IGC_TQAVCC_IDLESLOPE_MASK;
-			tqavcc |= cbs_value | IGC_TQAVCC_KEEP_CREDITS;
-			wr32(IGC_TQAVCC(i), tqavcc);
-
-			wr32(IGC_TQAVHC(i),
-			     0x80000000 + ring->hicredit * 0x7736);
+			igc_tsn_write_cbs(adapter, i);
 		} else {
 			/* Disable any CBS for the queue */
 			txqctl &= ~(IGC_TXQCTL_QAV_SEL_MASK);
