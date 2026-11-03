@@ -6958,6 +6958,7 @@ static int igc_tsn_enable_cbs(struct igc_adapter *adapter,
 			      struct tc_cbs_qopt_offload *qopt)
 {
 	struct igc_hw *hw = &adapter->hw;
+	bool was_enabled;
 	int err;
 
 	if (hw->mac.type != igc_i225)
@@ -6966,11 +6967,15 @@ static int igc_tsn_enable_cbs(struct igc_adapter *adapter,
 	if (qopt->queue < 0 || qopt->queue > 1)
 		return -EINVAL;
 
+	was_enabled = adapter->tx_ring[qopt->queue]->cbs_enable;
 	err = igc_save_cbs_params(adapter, qopt->queue, qopt->enable,
 				  qopt->idleslope, qopt->sendslope,
 				  qopt->hicredit, qopt->locredit);
 	if (err)
 		return err;
+
+	if (igc_tsn_update_cbs(adapter, qopt->queue, was_enabled))
+		return 0;
 
 	return igc_tsn_offload_apply(adapter);
 }
