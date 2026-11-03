@@ -50,6 +50,7 @@ static int igc_ptp_adjfine_i225(struct ptp_clock_info *ptp, long scaled_ppm)
 	struct igc_adapter *igc = container_of(ptp, struct igc_adapter,
 					       ptp_caps);
 	struct igc_hw *hw = &igc->hw;
+	unsigned long flags;
 	int neg_adj = 0;
 	u64 rate;
 	u32 inca;
@@ -66,7 +67,9 @@ static int igc_ptp_adjfine_i225(struct ptp_clock_info *ptp, long scaled_ppm)
 	if (neg_adj)
 		inca |= ISGN;
 
+	spin_lock_irqsave(&igc->tmreg_lock, flags);
 	wr32(IGC_TIMINCA, inca);
+	spin_unlock_irqrestore(&igc->tmreg_lock, flags);
 
 	return 0;
 }
