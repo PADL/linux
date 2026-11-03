@@ -1065,13 +1065,74 @@ static int igc_write_mc_addr_list(struct net_device *netdev)
 	return netdev_mc_count(netdev);
 }
 
+#define IGC_TX_CLOCK_TRIES	3
+#define IGC_TX_CLOCK_SPAN_NS	(2 * NSEC_PER_USEC)
+
+/* @clockid's time now: CLOCK_REALTIME, CLOCK_MONOTONIC or CLOCK_TAI. */
+static ktime_t igc_tx_clock_read(clockid_t clockid)
+{
+	switch (clockid) {
+	case CLOCK_REALTIME:
+		return ktime_get_real();
+	case CLOCK_MONOTONIC:
+		return ktime_get();
+	default:
+		return ktime_get_clocktai();
+	}
+}
+
+/* SYSTIM, with @clock set to @clockid's time at the same instant: the
+ * midpoint of the narrowest of up to IGC_TX_CLOCK_TRIES brackets, as a
+ * preemption inside one (PREEMPT_RT) widens it.
+ */
+static ktime_t igc_tx_systim(struct igc_adapter *adapter, clockid_t clockid,
+			     ktime_t *clock)
+{
+	ktime_t before, after, span, best = KTIME_MAX, systim = 0;
+	struct timespec64 ts;
+	unsigned long flags;
+	int i;
+
+	for (i = 0; i < IGC_TX_CLOCK_TRIES && best > IGC_TX_CLOCK_SPAN_NS; i++) {
+		spin_lock_irqsave(&adapter->tmreg_lock, flags);
+		before = igc_tx_clock_read(clockid);
+		igc_ptp_read(adapter, &ts);
+		after = igc_tx_clock_read(clockid);
+		spin_unlock_irqrestore(&adapter->tmreg_lock, flags);
+
+		span = ktime_sub(after, before);
+		if (span >= best)
+			continue;
+
+		best = span;
+		systim = timespec64_to_ktime(ts);
+		*clock = ktime_add_ns(before, span / 2);
+	}
+
+	return systim;
+}
+
+/* SYSTIM now. The first call reads the register; later calls add the
+ * CLOCK_MONOTONIC time since, which avoids a register read per packet.
+ */
+static ktime_t igc_tx_clock_now(struct igc_adapter *adapter,
+				struct igc_tx_clock *clock)
+{
+	if (!clock->mono)
+		clock->systim = igc_tx_systim(adapter, CLOCK_MONOTONIC,
+					      &clock->mono);
+
+	return ktime_add(clock->systim, ktime_sub(ktime_get(), clock->mono));
+}
+
+/* @now is in @txtime's clock: the Qbv cycle is estimated from it. */
 static __le32 igc_tx_launchtime(struct igc_ring *ring, ktime_t txtime,
-				bool *first_flag, bool *insert_empty)
+				ktime_t now, bool *first_flag,
+				bool *insert_empty)
 {
 	struct igc_adapter *adapter = netdev_priv(ring->netdev);
 	ktime_t cycle_time = adapter->cycle_time;
 	ktime_t base_time = adapter->base_time;
-	ktime_t now = ktime_get_clocktai();
 	ktime_t baset_est, end_of_cycle;
 	s32 launchtime;
 	s64 n;
@@ -1086,7 +1147,8 @@ static __le32 igc_tx_launchtime(struct igc_ring *ring, ktime_t txtime,
 			*first_flag = true;
 			ring->last_ff_cycle = baset_est;
 
-			if (ktime_compare(end_of_cycle, ring->last_tx_cycle) > 0)
+			/* Also after SYSTIM stepped back past last_tx_cycle. */
+			if (ktime_compare(end_of_cycle, ring->last_tx_cycle) != 0)
 				*insert_empty = true;
 		}
 	}
@@ -1662,7 +1724,8 @@ static netdev_tx_t igc_xmit_frame_ring(struct sk_buff *skb,
 
 	txtime = skb->tstamp;
 	skb->tstamp = ktime_set(0, 0);
-	launch_time = igc_tx_launchtime(tx_ring, txtime, &first_flag, &insert_empty);
+	launch_time = igc_tx_launchtime(tx_ring, txtime, ktime_get_clocktai(),
+					&first_flag, &insert_empty);
 
 	if (insert_empty) {
 		/* Reset the launch time if the required empty frame fails to
@@ -3032,12 +3095,14 @@ static void igc_xsk_request_launch_time(u64 launch_time, void *_priv)
 	bool insert_empty = false;
 	bool first_flag = false;
 	u16 used_desc = 0;
+	ktime_t now;
 
 	if (!tx_ring->launchtime_enable)
 		return;
 
+	now = igc_tx_clock_now(netdev_priv(tx_ring->netdev), meta_req->clock);
 	launch_time_offset = igc_tx_launchtime(tx_ring,
-					       ns_to_ktime(launch_time),
+					       ns_to_ktime(launch_time), now,
 					       &first_flag, &insert_empty);
 	if (insert_empty) {
 		/* Disregard the launch time request if the required empty frame
@@ -3073,6 +3138,7 @@ static void igc_xdp_xmit_zc(struct igc_ring *ring)
 	struct xsk_buff_pool *pool = ring->xsk_pool;
 	struct netdev_queue *nq = txring_txq(ring);
 	union igc_adv_tx_desc *tx_desc = NULL;
+	struct igc_tx_clock clock = {};
 	int cpu = smp_processor_id();
 	struct xdp_desc xdp_desc;
 	u16 budget, ntu;
@@ -3116,6 +3182,7 @@ static void igc_xdp_xmit_zc(struct igc_ring *ring)
 		meta_req.tx_ring = ring;
 		meta_req.tx_buffer = bi;
 		meta_req.meta = meta;
+		meta_req.clock = &clock;
 		meta_req.used_desc = 0;
 		xsk_tx_metadata_request(pool, &meta, &igc_xsk_tx_metadata_ops,
 					&meta_req);
