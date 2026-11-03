@@ -1187,10 +1187,12 @@ static ktime_t igc_skb_txtime_now(struct igc_adapter *adapter,
 	return ktime_add(igc_tx_clock_read(clockid), offset);
 }
 
-/* From the time igc_tx_launchtime() reads now to the hardware fetching the
- * packet: the descriptor writes, the tail update and the DMA.
+/* From the time igc_tx_launchtime() reads now to the hardware taking a
+ * packet for the next cycle: an empty frame's allocation and mapping, the
+ * packet's mapping, the descriptor writes, the tail update and the fetch.
+ * Measured on an I226, not derived.
  */
-#define IGC_TX_LAUNCH_GUARD_NS	(10 * NSEC_PER_USEC)
+#define IGC_TX_LAUNCH_GUARD_NS	(50 * NSEC_PER_USEC)
 
 /* @now is in @txtime's clock: the Qbv cycle is estimated from it. */
 static __le32 igc_tx_launchtime(struct igc_ring *ring, ktime_t txtime,
@@ -1230,12 +1232,13 @@ static __le32 igc_tx_launchtime(struct igc_ring *ring, ktime_t txtime,
 	else
 		next_cycle_time = cycle_time;
 
-	/* So close to the end of the cycle the hardware may fetch the packet
-	 * in this cycle or the next: wait for the next and place it there.
+	/* Near the end of a cycle the hardware may take a packet due in the
+	 * next cycle as due in the one after: wait for the next and place it
+	 * there. One due in this cycle stays in it.
 	 */
 	wait = ktime_sub(end_of_cycle, now);
-	if (wait > 0 &&
-	    wait < min_t(s64, IGC_TX_LAUNCH_GUARD_NS, cycle_time / 4)) {
+	if (wait > 0 && ktime_compare(txtime, end_of_cycle) >= 0 &&
+	    wait < min_t(s64, IGC_TX_LAUNCH_GUARD_NS, cycle_time / 2)) {
 		/* Packets queued before this one must not wait with it. */
 		igc_flush_tx_descriptors(ring);
 		ndelay(wait);
