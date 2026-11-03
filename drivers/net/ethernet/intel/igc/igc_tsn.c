@@ -488,6 +488,35 @@ bool igc_tsn_update_cbs(struct igc_adapter *adapter, int queue,
 	return true;
 }
 
+static bool igc_tsn_on_grid(ktime_t t, ktime_t base, s64 cycle)
+{
+	s64 since = ktime_sub(t, base);
+
+	return since == div64_s64(since, cycle) * cycle;
+}
+
+/* Whether a cycle of @cycle ns through @base_time is the one the I226 runs at
+ * @systim: recorded as running, already switched to, and with the BASET it
+ * holds the next start on that grid. Called with tmreg_lock held.
+ */
+static bool igc_tsn_same_cycle(struct igc_adapter *adapter, ktime_t systim,
+			       ktime_t base_time, s64 cycle)
+{
+	ktime_t held;
+
+	lockdep_assert_held(&adapter->tmreg_lock);
+
+	if (cycle != adapter->qbv_cycle_time ||
+	    ktime_compare(systim, adapter->qbv_switch_time) < 0 ||
+	    !igc_tsn_on_grid(base_time, adapter->qbv_base_time, cycle))
+		return false;
+
+	held = igc_tsn_read_baset(adapter);
+	return ktime_compare(held, systim) > 0 &&
+	       ktime_compare(held, ktime_add_ns(systim, cycle)) <= 0 &&
+	       igc_tsn_on_grid(held, base_time, cycle);
+}
+
 /* Returns the TSN specific registers to their default values after
  * the adapter is reset.
  */
@@ -601,7 +630,7 @@ static int igc_tsn_enable_offload(struct igc_adapter *adapter)
 	u32 tqavctrl, baset_l, baset_h;
 	u32 sec, nsec, cycle, tsauxc;
 	ktime_t base_time, systim;
-	bool baset_set, running;
+	bool baset_set, running, futscddis;
 	unsigned long flags;
 	u32 frag_size_mult;
 	int i;
@@ -704,8 +733,10 @@ skip_cbs:
 		wr32(IGC_TXQCTL(i), txqctl);
 	}
 
-	tqavctrl = rd32(IGC_TQAVCTRL) & ~(IGC_TQAVCTRL_FUTSCDDIS |
-		   IGC_TQAVCTRL_PREEMPT_ENA | IGC_TQAVCTRL_MIN_FRAG_MASK);
+	tqavctrl = rd32(IGC_TQAVCTRL);
+	futscddis = tqavctrl & IGC_TQAVCTRL_FUTSCDDIS;
+	tqavctrl &= ~(IGC_TQAVCTRL_FUTSCDDIS | IGC_TQAVCTRL_PREEMPT_ENA |
+		      IGC_TQAVCTRL_MIN_FRAG_MASK);
 	tqavctrl |= IGC_TQAVCTRL_TRANSMIT_MODE_TSN | IGC_TQAVCTRL_ENHANCED_QAV;
 
 	if (adapter->fpe.mmsv.pmac_enabled)
@@ -753,6 +784,13 @@ skip_cbs:
 
 	wr32(IGC_TQAVCTRL, tqavctrl);
 
+	/* Without taprio the cycle is igc's own second: one running on the
+	 * same grid needs no re-anchoring while traffic flows.
+	 */
+	if (running && !futscddis && !adapter->taprio_offload_enable &&
+	    igc_tsn_same_cycle(adapter, systim, base_time, cycle))
+		goto unlock;
+
 	wr32(IGC_QBVCYCLET_S, cycle);
 	wr32(IGC_QBVCYCLET, cycle);
 
@@ -768,6 +806,7 @@ skip_cbs:
 		wr32(IGC_BASET_L, 0);
 	wr32(IGC_BASET_L, baset_l);
 	igc_tsn_set_cycle(adapter, systim, base_time, cycle, running);
+unlock:
 	spin_unlock_irqrestore(&adapter->tmreg_lock, flags);
 
 	return 0;
