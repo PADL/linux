@@ -694,6 +694,27 @@ skip_cbs:
 	return 0;
 }
 
+/* BASET, re-reading BASET_H until it is stable across the BASET_L read. */
+static ktime_t igc_tsn_read_baset(struct igc_hw *hw)
+{
+	u32 baset_h, baset_l;
+
+	do {
+		baset_h = rd32(IGC_BASET_H);
+		baset_l = rd32(IGC_BASET_L);
+	} while (baset_h != rd32(IGC_BASET_H));
+
+	return ktime_set(baset_h, baset_l);
+}
+
+/* Reset the adapter to restart the Qbv cycle. */
+static void igc_tsn_schedule_qbv_reset(struct igc_adapter *adapter)
+{
+	netdev_info(adapter->netdev,
+		    "PHC stepped past the Qbv cycle, resetting\n");
+	schedule_work(&adapter->reset_task);
+}
+
 /**
  * igc_tsn_restart_cycle - Re-anchor the Qbv cycle after SYSTIM was set
  * @adapter: Board private structure
@@ -706,32 +727,39 @@ skip_cbs:
  * time, as igc_tsn_enable_offload() would. A configured base time that is
  * still ahead of the new time is left alone. Called with tmreg_lock held.
  *
- * The hardware takes a BASET write only if it is no later than the next
- * cycle start it holds. A step a cycle or more past that start leaves it
- * behind SYSTIM for good, so only an adapter reset restarts the cycle.
+ * On an I226 the hardware accepts a BASET write only if it is no later than
+ * the next cycle start it holds, so only a backward step is written. A step
+ * a cycle or more past that start leaves it behind SYSTIM for good, and
+ * only an adapter reset restarts the cycle.
  */
 void igc_tsn_restart_cycle(struct igc_adapter *adapter, ktime_t systim)
 {
 	struct igc_hw *hw = &adapter->hw;
 	ktime_t base_time, next_start;
 	u32 baset_l, baset_h;
+	int cmp;
 
 	lockdep_assert_held(&adapter->tmreg_lock);
 
-	if (!igc_tsn_is_tx_mode_in_tsn(adapter) ||
-	    ktime_compare(systim, adapter->base_time) < 0)
+	if (!igc_tsn_is_tx_mode_in_tsn(adapter))
 		return;
 
-	next_start = ktime_set(rd32(IGC_BASET_H), rd32(IGC_BASET_L));
-	if (ktime_compare(systim, ktime_add_ns(next_start,
-					       adapter->cycle_time)) >= 0) {
-		netdev_info(adapter->netdev,
-			    "PHC stepped past the Qbv cycle, resetting\n");
-		schedule_work(&adapter->reset_task);
+	cmp = ktime_compare(systim, adapter->base_time);
+	if (cmp < 0 || (cmp == 0 && adapter->taprio_offload_enable))
 		return;
-	}
 
 	base_time = igc_tsn_next_cycle_start(adapter, systim);
+	if (igc_is_device_id_i226(hw)) {
+		next_start = igc_tsn_read_baset(hw);
+		if (ktime_compare(systim, ktime_add_ns(next_start,
+						       adapter->cycle_time)) >= 0) {
+			igc_tsn_schedule_qbv_reset(adapter);
+			return;
+		}
+		if (ktime_compare(base_time, next_start) >= 0)
+			return;
+	}
+
 	baset_h = div_s64_rem(base_time, NSEC_PER_SEC, &baset_l);
 	wr32(IGC_BASET_H, baset_h);
 	/* As in igc_tsn_enable_offload() when FutScdDis is set. */
