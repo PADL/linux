@@ -1194,6 +1194,28 @@ static ktime_t igc_skb_txtime_now(struct igc_adapter *adapter,
  */
 #define IGC_TX_LAUNCH_GUARD_NS	(50 * NSEC_PER_USEC)
 
+/* Without taprio (STRICT_END unset) a frame still queued when a cycle ends
+ * waits for its offset in the next cycle, a second later. A launch time that
+ * close to the end goes at the next start instead: on a CBS queue within
+ * IGC_TX_LAUNCH_BAND_NS, measured with CBS spreading a burst, and otherwise
+ * within two full frames' time at the link speed, for another queue's frame
+ * still on the wire.
+ */
+#define IGC_TX_LAUNCH_BAND_NS	(300 * NSEC_PER_USEC)
+#define IGC_TX_FRAME_WIRE_BITS	(1538 * 8)
+
+static s64 igc_tx_launch_band(struct igc_adapter *adapter,
+			      struct igc_ring *ring)
+{
+	u16 speed = READ_ONCE(adapter->link_speed);
+
+	if (READ_ONCE(ring->cbs_enable))
+		return IGC_TX_LAUNCH_BAND_NS;
+
+	/* bits * 1000 / Mbit/s is ns; 10 Mbit/s while the link is down */
+	return 2 * IGC_TX_FRAME_WIRE_BITS * 1000 / max_t(u16, speed, SPEED_10);
+}
+
 /* @now is in @txtime's clock: the Qbv cycle is estimated from it. */
 static __le32 igc_tx_launchtime(struct igc_ring *ring, ktime_t txtime,
 				ktime_t now, bool *first_flag,
@@ -1231,6 +1253,11 @@ static __le32 igc_tx_launchtime(struct igc_ring *ring, ktime_t txtime,
 		end_of_cycle = switch_time;
 	else
 		next_cycle_time = cycle_time;
+
+	if (!READ_ONCE(adapter->taprio_offload_enable) &&
+	    ktime_compare(txtime, end_of_cycle) < 0 &&
+	    ktime_sub(end_of_cycle, txtime) <= igc_tx_launch_band(adapter, ring))
+		txtime = end_of_cycle;
 
 	/* Near the end of a cycle the hardware may take a packet due in the
 	 * next cycle as due in the one after: wait for the next and place it
