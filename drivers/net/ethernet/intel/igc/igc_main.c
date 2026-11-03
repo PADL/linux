@@ -6685,6 +6685,10 @@ static bool validate_schedule(struct igc_adapter *adapter,
 	return true;
 }
 
+/* Launch time is validated alone and under cbs. Under a taprio schedule
+ * (1 ms cycle, steady load) an I226 queue has been seen to stop for good,
+ * with or without the launch time changes in this driver.
+ */
 static int igc_tsn_enable_launchtime(struct igc_adapter *adapter,
 				     struct tc_etf_qopt_offload *qopt)
 {
