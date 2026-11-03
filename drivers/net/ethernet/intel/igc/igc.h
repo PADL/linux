@@ -612,10 +612,19 @@ struct igc_xdp_buff {
 	struct igc_inline_rx_tstamps *rx_ts; /* data indication bit IGC_RXDADV_STAT_TSIP */
 };
 
+/* SYSTIM, the clock a launch time counts in, read once and carried forward
+ * on CLOCK_MONOTONIC; zero-initialised, it is read at first use.
+ */
+struct igc_tx_clock {
+	ktime_t systim;
+	ktime_t mono;
+};
+
 struct igc_metadata_request {
 	struct igc_tx_buffer *tx_buffer;
 	struct xsk_tx_metadata *meta;
 	struct igc_ring *tx_ring;
+	struct igc_tx_clock *clock;
 	u32 cmd_type;
 	u16 used_desc;
 };
