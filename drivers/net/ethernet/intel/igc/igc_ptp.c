@@ -81,9 +81,12 @@ static int igc_ptp_adjtime_i225(struct ptp_clock_info *ptp, s64 delta)
 
 	spin_lock_irqsave(&igc->tmreg_lock, flags);
 
+	/* Read BASET first: reads between the SYSTIM read and write are lost
+	 * from the clock.
+	 */
+	held = igc_tsn_read_baset(igc);
 	igc_ptp_read(igc, &now);
 	now = timespec64_add(now, then);
-	held = igc_tsn_read_baset(igc);
 	igc_ptp_write_i225(igc, (const struct timespec64 *)&now);
 	igc_tsn_restart_cycle(igc, held, timespec64_to_ktime(now));
 	/* While down, SYSTIM may be mid-reset or unreadable; move the saved
