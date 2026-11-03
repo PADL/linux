@@ -6417,12 +6417,15 @@ static bool validate_schedule(struct igc_adapter *adapter,
 	int queue_uses[IGC_MAX_TX_QUEUES] = { };
 	struct igc_hw *hw = &adapter->hw;
 	struct timespec64 now;
+	unsigned long flags;
 	size_t n;
 
 	if (qopt->cycle_time_extension)
 		return false;
 
+	spin_lock_irqsave(&adapter->tmreg_lock, flags);
 	igc_ptp_read(adapter, &now);
+	spin_unlock_irqrestore(&adapter->tmreg_lock, flags);
 
 	/* If we program the controller's BASET registers with a time
 	 * in the future, it will hold all the packets until that
@@ -6570,7 +6573,9 @@ static int igc_save_qbv_schedule(struct igc_adapter *adapter,
 		return -ENODEV;
 	}
 
+	spin_lock_irqsave(&adapter->tmreg_lock, flags);
 	igc_ptp_read(adapter, &now);
+	spin_unlock_irqrestore(&adapter->tmreg_lock, flags);
 
 	if (igc_tsn_is_taprio_activated_by_user(adapter) &&
 	    is_base_time_past(qopt->base_time, &now))
