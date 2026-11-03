@@ -5396,25 +5396,58 @@ void igc_reinit_locked(struct igc_adapter *adapter)
 	clear_bit(__IGC_RESETTING, &adapter->state);
 }
 
+/* Restart the Qbv cycle of an interface that is down. igc_reset() clears
+ * __IGC_QBV_RESET_PENDING, so a second queued request finds it clear. A
+ * device that is detached, or running while down, is being removed or reset.
+ */
+static void igc_reset_down(struct igc_adapter *adapter)
+{
+	if (!test_bit(__IGC_QBV_RESET_PENDING, &adapter->state) ||
+	    netif_running(adapter->netdev) ||
+	    !netif_device_present(adapter->netdev) ||
+	    pci_channel_offline(adapter->pdev) ||
+	    !pci_device_is_present(adapter->pdev))
+		return;
+
+	igc_ptp_suspend(adapter);
+	igc_reset(adapter);
+}
+
 static void igc_reset_task(struct work_struct *work)
 {
 	struct igc_adapter *adapter;
+	struct device *dev;
+	bool qbv;
 
 	adapter = container_of(work, struct igc_adapter, reset_task);
+	dev = &adapter->pdev->dev;
+	qbv = test_bit(__IGC_QBV_RESET_PENDING, &adapter->state);
 
+	/* A runtime resume runs __igc_open() without the RTNL lock. */
+	pm_runtime_get_sync(dev);
 	rtnl_lock();
-	/* If we're already down or resetting, just bail */
-	if (test_bit(__IGC_DOWN, &adapter->state) ||
-	    test_bit(__IGC_RESETTING, &adapter->state)) {
-		rtnl_unlock();
-		return;
+	if (test_bit(__IGC_DOWN, &adapter->state)) {
+		igc_reset_down(adapter);
+		goto unlock;
 	}
+	/* If we're already resetting, just bail */
+	if (test_bit(__IGC_RESETTING, &adapter->state))
+		goto unlock;
 
-	igc_rings_dump(adapter);
-	igc_regs_dump(adapter);
-	netdev_err(adapter->netdev, "Reset adapter\n");
+	/* Another reset, such as a runtime resume, has restarted the cycle. */
+	if (qbv && !test_bit(__IGC_QBV_RESET_PENDING, &adapter->state))
+		goto unlock;
+
+	/* igc_tsn_schedule_qbv_reset() has already said why. */
+	if (!qbv) {
+		igc_rings_dump(adapter);
+		igc_regs_dump(adapter);
+		netdev_err(adapter->netdev, "Reset adapter\n");
+	}
 	igc_reinit_locked(adapter);
+unlock:
 	rtnl_unlock();
+	pm_runtime_put(dev);
 }
 
 /**
@@ -6226,12 +6259,6 @@ static int __igc_open(struct net_device *netdev, bool resuming)
 	if (err)
 		goto err_setup_rx;
 
-	/* A PHC step while down left the Qbv cycle behind SYSTIM. */
-	if (test_bit(__IGC_QBV_RESET_PENDING, &adapter->state)) {
-		igc_ptp_suspend(adapter);
-		igc_reset(adapter);
-	}
-
 	igc_power_up_link(adapter);
 
 	igc_configure(adapter);
@@ -6260,13 +6287,6 @@ static int __igc_open(struct net_device *netdev, bool resuming)
 	/* start the watchdog. */
 	hw->mac.get_link_status = true;
 	schedule_work(&adapter->watchdog_task);
-
-	/* A step after the check above may have found __IGC_DOWN still set;
-	 * pairs with test_and_set_bit() in igc_tsn_schedule_qbv_reset().
-	 */
-	smp_mb();
-	if (test_bit(__IGC_QBV_RESET_PENDING, &adapter->state))
-		schedule_work(&adapter->reset_task);
 
 	return IGC_SUCCESS;
 
