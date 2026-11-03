@@ -1225,7 +1225,7 @@ static __le32 igc_tx_launchtime(struct igc_ring *ring, ktime_t txtime,
 	 */
 	if (ktime_sub_ns(end_of_cycle, now) < 5 * NSEC_PER_USEC &&
 	    net_ratelimit())
-		netdev_warn(ring->netdev, "Packet with txtime=%llu may not be honoured\n",
+		netdev_warn(ring->netdev, "Packet with txtime=%lld may not be honoured\n",
 			    txtime);
 
 	ring->last_tx_cycle = end_of_cycle;
