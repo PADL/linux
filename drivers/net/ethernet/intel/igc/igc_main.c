@@ -1125,6 +1125,53 @@ static ktime_t igc_tx_clock_now(struct igc_adapter *adapter,
 	return ktime_add(clock->systim, ktime_sub(ktime_get(), clock->mono));
 }
 
+/* The clock @skb's txtime counts in: its delivery time type, except that
+ * SKB_CLOCK_REALTIME is also the type of an skb no clock was set for,
+ * which counts in etf's CLOCK_TAI.
+ */
+static clockid_t igc_skb_txtime_clockid(const struct sk_buff *skb)
+{
+	const struct sock *sk = skb->sk;
+
+	switch (skb->tstamp_type) {
+	case SKB_CLOCK_MONOTONIC:
+		return CLOCK_MONOTONIC;
+	case SKB_CLOCK_TAI:
+		return CLOCK_TAI;
+	default:
+		break;
+	}
+
+	if (sk && sk_fullsock(sk) && sock_flag(sk, SOCK_TXTIME) &&
+	    READ_ONCE(sk->sk_clockid) == CLOCK_REALTIME)
+		return CLOCK_REALTIME;
+
+	return CLOCK_TAI;
+}
+
+/* SYSTIM now, with @txtime moved into SYSTIM from the clock it counts in;
+ * an AF_XDP launch time is SYSTIM already.
+ */
+static ktime_t igc_skb_txtime_now(struct igc_adapter *adapter,
+				  struct sk_buff *skb, ktime_t *txtime)
+{
+	struct sock *sk = skb->sk;
+	ktime_t clock, systim;
+	struct timespec64 ts;
+	unsigned long flags;
+
+	if (sk && sk_fullsock(sk) && sk->sk_family == AF_XDP) {
+		spin_lock_irqsave(&adapter->tmreg_lock, flags);
+		igc_ptp_read(adapter, &ts);
+		spin_unlock_irqrestore(&adapter->tmreg_lock, flags);
+		return timespec64_to_ktime(ts);
+	}
+
+	systim = igc_tx_systim(adapter, igc_skb_txtime_clockid(skb), &clock);
+	*txtime = ktime_add(ktime_sub(*txtime, clock), systim);
+	return systim;
+}
+
 /* @now is in @txtime's clock: the Qbv cycle is estimated from it. */
 static __le32 igc_tx_launchtime(struct igc_ring *ring, ktime_t txtime,
 				ktime_t now, bool *first_flag,
@@ -1695,7 +1742,7 @@ static netdev_tx_t igc_xmit_frame_ring(struct sk_buff *skb,
 	__le32 launch_time = 0;
 	u32 tx_flags = 0;
 	unsigned short f;
-	ktime_t txtime;
+	ktime_t txtime, now;
 	u8 hdr_len = 0;
 	int tso = 0;
 
@@ -1724,8 +1771,13 @@ static netdev_tx_t igc_xmit_frame_ring(struct sk_buff *skb,
 
 	txtime = skb->tstamp;
 	skb->tstamp = ktime_set(0, 0);
-	launch_time = igc_tx_launchtime(tx_ring, txtime, ktime_get_clocktai(),
-					&first_flag, &insert_empty);
+	/* No launch time: offset 0, sent at once, no cycle recorded. */
+	if (!txtime)
+		goto done;
+
+	now = igc_skb_txtime_now(adapter, skb, &txtime);
+	launch_time = igc_tx_launchtime(tx_ring, txtime, now, &first_flag,
+					&insert_empty);
 
 	if (insert_empty) {
 		/* Reset the launch time if the required empty frame fails to
