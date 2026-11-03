@@ -707,9 +707,12 @@ static ktime_t igc_tsn_read_baset(struct igc_hw *hw)
 	return ktime_set(baset_h, baset_l);
 }
 
-/* Reset the adapter to restart the Qbv cycle. */
+/* Reset the adapter to restart the Qbv cycle, once per pending reset. */
 static void igc_tsn_schedule_qbv_reset(struct igc_adapter *adapter)
 {
+	if (test_and_set_bit(__IGC_QBV_RESET_PENDING, &adapter->state))
+		return;
+
 	netdev_info(adapter->netdev,
 		    "PHC stepped past the Qbv cycle, resetting\n");
 	schedule_work(&adapter->reset_task);
