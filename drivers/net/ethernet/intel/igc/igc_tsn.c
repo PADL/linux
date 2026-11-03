@@ -705,18 +705,31 @@ skip_cbs:
  * the cycle from the new time, keeping the phase of the configured base
  * time, as igc_tsn_enable_offload() would. A configured base time that is
  * still ahead of the new time is left alone. Called with tmreg_lock held.
+ *
+ * The hardware takes a BASET write only if it is no later than the next
+ * cycle start it holds. A step a cycle or more past that start leaves it
+ * behind SYSTIM for good, so only an adapter reset restarts the cycle.
  */
 void igc_tsn_restart_cycle(struct igc_adapter *adapter, ktime_t systim)
 {
 	struct igc_hw *hw = &adapter->hw;
+	ktime_t base_time, next_start;
 	u32 baset_l, baset_h;
-	ktime_t base_time;
 
 	lockdep_assert_held(&adapter->tmreg_lock);
 
 	if (!igc_tsn_is_tx_mode_in_tsn(adapter) ||
-	    ktime_compare(systim, adapter->base_time) <= 0)
+	    ktime_compare(systim, adapter->base_time) < 0)
 		return;
+
+	next_start = ktime_set(rd32(IGC_BASET_H), rd32(IGC_BASET_L));
+	if (ktime_compare(systim, ktime_add_ns(next_start,
+					       adapter->cycle_time)) >= 0) {
+		netdev_info(adapter->netdev,
+			    "PHC stepped past the Qbv cycle, resetting\n");
+		schedule_work(&adapter->reset_task);
+		return;
+	}
 
 	base_time = igc_tsn_next_cycle_start(adapter, systim);
 	baset_h = div_s64_rem(base_time, NSEC_PER_SEC, &baset_l);
