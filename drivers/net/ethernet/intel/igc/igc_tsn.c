@@ -739,8 +739,8 @@ static void igc_tsn_schedule_qbv_reset(struct igc_adapter *adapter)
  * a step of the clock: stepped back, no queue's window opens until SYSTIM
  * reaches the old cycle start again, and every Tx queue stalls. Restart
  * the cycle from the new time, keeping the phase of the configured base
- * time, as igc_tsn_enable_offload() would. A configured base time that is
- * still ahead of the new time is left alone. Called with tmreg_lock held.
+ * time, as igc_tsn_enable_offload() would, or at the base time of a taprio
+ * schedule that is not past the new time. Called with tmreg_lock held.
  *
  * On an I226 the hardware accepts a BASET write only if it is no later than
  * the next cycle start it holds, so only a backward step is written. When
@@ -754,18 +754,17 @@ void igc_tsn_restart_cycle(struct igc_adapter *adapter, ktime_t held,
 	struct igc_hw *hw = &adapter->hw;
 	ktime_t base_time;
 	u32 baset_l, baset_h;
-	int cmp;
 
 	lockdep_assert_held(&adapter->tmreg_lock);
 
 	if (!igc_tsn_is_tx_mode_in_tsn(adapter))
 		return;
 
-	cmp = ktime_compare(systim, adapter->base_time);
-	if (cmp < 0 || (cmp == 0 && adapter->taprio_offload_enable))
-		return;
-
-	base_time = igc_tsn_next_cycle_start(adapter, systim);
+	if (adapter->taprio_offload_enable &&
+	    ktime_compare(systim, adapter->base_time) <= 0)
+		base_time = adapter->base_time;
+	else
+		base_time = igc_tsn_next_cycle_start(adapter, systim);
 	if (igc_is_device_id_i226(hw)) {
 		if (ktime_compare(systim, ktime_add_ns(held,
 						       adapter->cycle_time)) >= 0) {
