@@ -6898,10 +6898,8 @@ static int igc_save_cbs_params(struct igc_adapter *adapter, int queue,
 			       bool enable, int idleslope, int sendslope,
 			       int hicredit, int locredit)
 {
-	bool cbs_status[IGC_MAX_SR_QUEUES] = { false };
 	struct net_device *netdev = adapter->netdev;
 	struct igc_ring *ring;
-	int i;
 
 	/* i225 has two sets of credit-based shaper logic.
 	 * Supporting it only on the top two priority queues
@@ -6911,25 +6909,15 @@ static int igc_save_cbs_params(struct igc_adapter *adapter, int queue,
 
 	ring = adapter->tx_ring[queue];
 
-	for (i = 0; i < IGC_MAX_SR_QUEUES; i++)
-		if (adapter->tx_ring[i])
-			cbs_status[i] = adapter->tx_ring[i]->cbs_enable;
-
 	/* CBS should be enabled on the highest priority queue first in order
-	 * for the CBS algorithm to operate as intended.
+	 * for the CBS algorithm to operate as intended; a queue 1 shaper that
+	 * outlived queue 0's may still be changed. Disabling always succeeds,
+	 * as sch_cbs ignores a failure and would leave the queue shaped.
 	 */
-	if (enable) {
-		if (queue == 1 && !cbs_status[0]) {
-			netdev_err(netdev,
-				   "Enabling CBS on queue1 before queue0\n");
-			return -EINVAL;
-		}
-	} else {
-		if (queue == 0 && cbs_status[1]) {
-			netdev_err(netdev,
-				   "Disabling CBS on queue0 before queue1\n");
-			return -EINVAL;
-		}
+	if (enable && queue == 1 && !ring->cbs_enable &&
+	    !adapter->tx_ring[0]->cbs_enable) {
+		netdev_err(netdev, "Enabling CBS on queue1 before queue0\n");
+		return -EINVAL;
 	}
 
 	ring->cbs_enable = enable;
