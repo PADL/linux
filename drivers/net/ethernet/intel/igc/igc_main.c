@@ -1209,7 +1209,10 @@ static __le32 igc_tx_launchtime(struct igc_ring *ring, ktime_t txtime,
 			*first_flag = true;
 			ring->last_ff_cycle = baset_est;
 
-			/* Also after SYSTIM stepped back past last_tx_cycle. */
+			/* Also when last_tx_cycle is ahead: after SYSTIM stepped
+			 * back or a schedule change, or when a previous packet's
+			 * now ran ahead of this one's.
+			 */
 			if (ktime_compare(end_of_cycle, ring->last_tx_cycle) != 0)
 				*insert_empty = true;
 		}
