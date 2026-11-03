@@ -698,13 +698,17 @@ skip_cbs:
  * igc_tsn_read_baset - Read the next Qbv cycle start the hardware holds
  * @adapter: Board private structure
  *
- * Re-reads BASET_H until it is stable across the BASET_L read.
- * Return: BASET as a SYSTIM time.
+ * Re-reads BASET_H until it is stable across the BASET_L read. Only an I226
+ * in Tx TSN mode needs the value, so other parts skip the reads.
+ * Return: BASET as a SYSTIM time, or 0 when igc_tsn_restart_cycle() ignores it.
  */
 ktime_t igc_tsn_read_baset(struct igc_adapter *adapter)
 {
 	struct igc_hw *hw = &adapter->hw;
 	u32 baset_h, baset_l;
+
+	if (!igc_is_device_id_i226(hw) || !igc_tsn_is_tx_mode_in_tsn(adapter))
+		return 0;
 
 	do {
 		baset_h = rd32(IGC_BASET_H);
