@@ -22,6 +22,8 @@ void igc_fpe_save_preempt_queue(struct igc_adapter *adapter,
 				const struct tc_mqprio_qopt_offload *mqprio);
 u32 igc_fpe_get_supported_frag_size(u32 frag_size);
 int igc_tsn_offload_apply(struct igc_adapter *adapter);
+bool igc_tsn_update_cbs(struct igc_adapter *adapter, int queue,
+			bool was_enabled);
 int igc_tsn_reset(struct igc_adapter *adapter);
 ktime_t igc_tsn_read_baset(struct igc_adapter *adapter);
 void igc_tsn_restart_cycle(struct igc_adapter *adapter, ktime_t held,
