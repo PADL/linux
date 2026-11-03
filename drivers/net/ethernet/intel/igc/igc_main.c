@@ -1100,13 +1100,20 @@ static ktime_t igc_tx_systim(struct igc_adapter *adapter, clockid_t clockid,
 		after = igc_tx_clock_read(clockid);
 		spin_unlock_irqrestore(&adapter->tmreg_lock, flags);
 
+		/* Negative when @clockid stepped back inside the bracket. */
 		span = ktime_sub(after, before);
-		if (span >= best)
+		if (span < 0 || span >= best)
 			continue;
 
 		best = span;
 		systim = timespec64_to_ktime(ts);
 		*clock = ktime_add_ns(before, span / 2);
+	}
+
+	/* Every bracket held a step: pair the last read with its end. */
+	if (best == KTIME_MAX) {
+		systim = timespec64_to_ktime(ts);
+		*clock = after;
 	}
 
 	return systim;
