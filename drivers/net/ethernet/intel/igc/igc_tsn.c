@@ -358,12 +358,40 @@ static void igc_tsn_set_rxpbsize(struct igc_adapter *adapter,
 	wr32(IGC_RXPBS, rxpbs);
 }
 
+/* Record that the hardware runs a cycle of @cycle ns from @baset on. If it
+ * already ran one, it keeps that until @baset; if not, or @running is
+ * false, the new cycle applies at once. Called with tmreg_lock held.
+ */
+static void igc_tsn_set_cycle(struct igc_adapter *adapter, ktime_t systim,
+			      ktime_t baset, ktime_t cycle, bool running)
+{
+	lockdep_assert_held(&adapter->tmreg_lock);
+
+	write_seqcount_begin(&adapter->qbv_cycle_seq);
+	if (!running) {
+		adapter->qbv_prev_base_time = baset;
+		adapter->qbv_prev_cycle_time = cycle;
+		adapter->qbv_switch_time = 0;
+	} else {
+		/* A cycle replaced before its BASET never ran. */
+		if (ktime_compare(systim, adapter->qbv_base_time) >= 0) {
+			adapter->qbv_prev_base_time = adapter->qbv_base_time;
+			adapter->qbv_prev_cycle_time = adapter->qbv_cycle_time;
+		}
+		adapter->qbv_switch_time = baset;
+	}
+	adapter->qbv_base_time = baset;
+	adapter->qbv_cycle_time = cycle;
+	write_seqcount_end(&adapter->qbv_cycle_seq);
+}
+
 /* Returns the TSN specific registers to their default values after
  * the adapter is reset.
  */
 static int igc_tsn_disable_offload(struct igc_adapter *adapter)
 {
 	struct igc_hw *hw = &adapter->hw;
+	unsigned long flags;
 	u32 tqavctrl;
 	int i;
 
@@ -398,6 +426,10 @@ static int igc_tsn_disable_offload(struct igc_adapter *adapter)
 
 	wr32(IGC_QBVCYCLET_S, 0);
 	wr32(IGC_QBVCYCLET, NSEC_PER_SEC);
+
+	spin_lock_irqsave(&adapter->tmreg_lock, flags);
+	igc_tsn_set_cycle(adapter, 0, 0, NSEC_PER_SEC, false);
+	spin_unlock_irqrestore(&adapter->tmreg_lock, flags);
 
 	/* Restore the default Tx arbitration: Priority 0 has the highest
 	 * priority and is assigned to queue 0 and so on and so forth.
@@ -466,6 +498,7 @@ static int igc_tsn_enable_offload(struct igc_adapter *adapter)
 	u32 tqavctrl, baset_l, baset_h;
 	u32 sec, nsec, cycle, tsauxc;
 	ktime_t base_time, systim;
+	bool baset_set, running;
 	unsigned long flags;
 	u32 frag_size_mult;
 	int i;
@@ -649,6 +682,8 @@ skip_cbs:
 	sec = rd32(IGC_SYSTIMH);
 
 	systim = ktime_set(sec, nsec);
+	baset_set = rd32(IGC_BASET_H) || rd32(IGC_BASET_L);
+	running = igc_tsn_is_tx_mode_in_tsn(adapter) && baset_set;
 	if (ktime_compare(systim, base_time) > 0) {
 		base_time = igc_tsn_next_cycle_start(adapter, systim);
 	} else {
@@ -660,7 +695,7 @@ skip_cbs:
 			* Tx won't hang if a GCL is already running,
 			* so in this case we don't need to set FutScdDis.
 			*/
-			if (!(rd32(IGC_BASET_H) || rd32(IGC_BASET_L)))
+			if (!baset_set)
 				tqavctrl |= IGC_TQAVCTRL_FUTSCDDIS;
 
 			nsec = rd32(IGC_SYSTIML);
@@ -689,6 +724,7 @@ skip_cbs:
 	if (tqavctrl & IGC_TQAVCTRL_FUTSCDDIS)
 		wr32(IGC_BASET_L, 0);
 	wr32(IGC_BASET_L, baset_l);
+	igc_tsn_set_cycle(adapter, systim, base_time, cycle, running);
 	spin_unlock_irqrestore(&adapter->tmreg_lock, flags);
 
 	return 0;
@@ -781,6 +817,9 @@ void igc_tsn_restart_cycle(struct igc_adapter *adapter, ktime_t held,
 	if (rd32(IGC_TQAVCTRL) & IGC_TQAVCTRL_FUTSCDDIS)
 		wr32(IGC_BASET_L, 0);
 	wr32(IGC_BASET_L, baset_l);
+	/* SYSTIM moved under the cycle: nothing ran on this timescale. */
+	igc_tsn_set_cycle(adapter, systim, base_time, adapter->cycle_time,
+			  false);
 }
 
 int igc_tsn_reset(struct igc_adapter *adapter)

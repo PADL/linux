@@ -257,6 +257,15 @@ struct igc_adapter {
 	int tc_setup_type;
 	ktime_t base_time;
 	ktime_t cycle_time;
+	/* The Qbv cycle the hardware runs from qbv_switch_time on, and the one
+	 * it keeps until then (seen on an I226); written under tmreg_lock.
+	 */
+	seqcount_spinlock_t qbv_cycle_seq;
+	ktime_t qbv_base_time;
+	ktime_t qbv_cycle_time;
+	ktime_t qbv_prev_base_time;
+	ktime_t qbv_prev_cycle_time;
+	ktime_t qbv_switch_time;
 	bool taprio_offload_enable;
 	u32 qbv_config_change_errors;
 	bool qbv_transition;
