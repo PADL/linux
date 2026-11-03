@@ -7,6 +7,37 @@
 #include "igc.h"
 #include "igc_xdp.h"
 
+/* Stop the NAPI contexts serving @rx_ring and @tx_ring before either ring is
+ * cleaned: NAPI must not run on a ring that is being torn down.
+ */
+static void igc_xdp_napi_disable(struct igc_ring *rx_ring,
+				 struct igc_ring *tx_ring)
+{
+	napi_disable(&rx_ring->q_vector->napi);
+	if (tx_ring->q_vector != rx_ring->q_vector)
+		napi_disable(&tx_ring->q_vector->napi);
+}
+
+/* Restart NAPI once the rings are configured, and poll once: an interrupt
+ * taken while NAPI was disabled was auto-masked (EIAM), and only the poll
+ * unmasks it again.
+ */
+static void igc_xdp_napi_enable(struct igc_ring *rx_ring,
+				struct igc_ring *tx_ring)
+{
+	struct napi_struct *napi = &rx_ring->q_vector->napi;
+
+	napi_enable(napi);
+	if (tx_ring->q_vector != rx_ring->q_vector)
+		napi_enable(&tx_ring->q_vector->napi);
+
+	local_bh_disable();
+	napi_schedule(napi);
+	if (tx_ring->q_vector != rx_ring->q_vector)
+		napi_schedule(&tx_ring->q_vector->napi);
+	local_bh_enable();
+}
+
 int igc_xdp_set_prog(struct igc_adapter *adapter, struct bpf_prog *prog,
 		     struct netlink_ext_ack *extack)
 {
@@ -26,10 +57,12 @@ int igc_xdp_set_prog(struct igc_adapter *adapter, struct bpf_prog *prog,
 
 	need_update = !!adapter->xdp_prog != !!prog;
 	if (if_running && need_update) {
+		for (i = 0; i < adapter->num_rx_queues; i++)
+			igc_xdp_napi_disable(adapter->rx_ring[i],
+					     adapter->tx_ring[i]);
 		for (i = 0; i < adapter->num_rx_queues; i++) {
 			igc_disable_rx_ring(adapter->rx_ring[i]);
 			igc_disable_tx_ring(adapter->tx_ring[i]);
-			napi_disable(&adapter->rx_ring[i]->q_vector->napi);
 		}
 	}
 
@@ -44,10 +77,12 @@ int igc_xdp_set_prog(struct igc_adapter *adapter, struct bpf_prog *prog,
 
 	if (if_running && need_update) {
 		for (i = 0; i < adapter->num_rx_queues; i++) {
-			napi_enable(&adapter->rx_ring[i]->q_vector->napi);
 			igc_enable_tx_ring(adapter->tx_ring[i]);
 			igc_enable_rx_ring(adapter->rx_ring[i]);
 		}
+		for (i = 0; i < adapter->num_rx_queues; i++)
+			igc_xdp_napi_enable(adapter->rx_ring[i],
+					    adapter->tx_ring[i]);
 	}
 
 	return 0;
@@ -59,7 +94,6 @@ static int igc_xdp_enable_pool(struct igc_adapter *adapter,
 	struct net_device *ndev = adapter->netdev;
 	struct device *dev = &adapter->pdev->dev;
 	struct igc_ring *rx_ring, *tx_ring;
-	struct napi_struct *napi;
 	bool needs_reset;
 	u32 frame_size;
 	int err;
@@ -89,22 +123,20 @@ static int igc_xdp_enable_pool(struct igc_adapter *adapter,
 
 	rx_ring = adapter->rx_ring[queue_id];
 	tx_ring = adapter->tx_ring[queue_id];
-	/* Rx and Tx rings share the same napi context. */
-	napi = &rx_ring->q_vector->napi;
 
 	if (needs_reset) {
+		igc_xdp_napi_disable(rx_ring, tx_ring);
 		igc_disable_rx_ring(rx_ring);
 		igc_disable_tx_ring(tx_ring);
-		napi_disable(napi);
 	}
 
 	set_bit(IGC_RING_FLAG_AF_XDP_ZC, &rx_ring->flags);
 	set_bit(IGC_RING_FLAG_AF_XDP_ZC, &tx_ring->flags);
 
 	if (needs_reset) {
-		napi_enable(napi);
 		igc_enable_rx_ring(rx_ring);
 		igc_enable_tx_ring(tx_ring);
+		igc_xdp_napi_enable(rx_ring, tx_ring);
 
 		err = igc_xsk_wakeup(ndev, queue_id, XDP_WAKEUP_RX);
 		if (err) {
@@ -120,7 +152,6 @@ static int igc_xdp_disable_pool(struct igc_adapter *adapter, u16 queue_id)
 {
 	struct igc_ring *rx_ring, *tx_ring;
 	struct xsk_buff_pool *pool;
-	struct napi_struct *napi;
 	bool needs_reset;
 
 	if (queue_id >= adapter->num_rx_queues ||
@@ -135,13 +166,11 @@ static int igc_xdp_disable_pool(struct igc_adapter *adapter, u16 queue_id)
 
 	rx_ring = adapter->rx_ring[queue_id];
 	tx_ring = adapter->tx_ring[queue_id];
-	/* Rx and Tx rings share the same napi context. */
-	napi = &rx_ring->q_vector->napi;
 
 	if (needs_reset) {
+		igc_xdp_napi_disable(rx_ring, tx_ring);
 		igc_disable_rx_ring(rx_ring);
 		igc_disable_tx_ring(tx_ring);
-		napi_disable(napi);
 	}
 
 	xsk_pool_dma_unmap(pool, IGC_RX_DMA_ATTR);
@@ -149,9 +178,9 @@ static int igc_xdp_disable_pool(struct igc_adapter *adapter, u16 queue_id)
 	clear_bit(IGC_RING_FLAG_AF_XDP_ZC, &tx_ring->flags);
 
 	if (needs_reset) {
-		napi_enable(napi);
 		igc_enable_rx_ring(rx_ring);
 		igc_enable_tx_ring(tx_ring);
+		igc_xdp_napi_enable(rx_ring, tx_ring);
 	}
 
 	return 0;
