@@ -1181,8 +1181,8 @@ static __le32 igc_tx_launchtime(struct igc_ring *ring, ktime_t txtime,
 	ktime_t cycle_time = adapter->cycle_time;
 	ktime_t base_time = adapter->base_time;
 	ktime_t baset_est, end_of_cycle;
-	s32 launchtime;
-	s64 n;
+	s64 launchtime, n;
+	u64 offset;
 
 	n = div64_s64(ktime_sub_ns(now, base_time), cycle_time);
 
@@ -1212,12 +1212,11 @@ static __le32 igc_tx_launchtime(struct igc_ring *ring, ktime_t txtime,
 	ring->last_tx_cycle = end_of_cycle;
 
 	launchtime = ktime_sub_ns(txtime, baset_est);
-	if (launchtime > 0)
-		div_s64_rem(launchtime, cycle_time, &launchtime);
-	else
-		launchtime = 0;
+	if (launchtime <= 0)
+		return 0;
 
-	return cpu_to_le32(launchtime);
+	div64_u64_rem(launchtime, cycle_time, &offset);
+	return cpu_to_le32(offset);
 }
 
 static int igc_init_empty_frame(struct igc_ring *ring,
