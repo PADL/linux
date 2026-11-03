@@ -2,6 +2,7 @@
 /* Copyright (c)  2019 Intel Corporation */
 
 #include "igc.h"
+#include "igc_tsn.h"
 
 #include <linux/module.h>
 #include <linux/device.h>
@@ -82,6 +83,7 @@ static int igc_ptp_adjtime_i225(struct ptp_clock_info *ptp, s64 delta)
 	igc_ptp_read(igc, &now);
 	now = timespec64_add(now, then);
 	igc_ptp_write_i225(igc, (const struct timespec64 *)&now);
+	igc_tsn_restart_cycle(igc, timespec64_to_ktime(now));
 
 	spin_unlock_irqrestore(&igc->tmreg_lock, flags);
 
@@ -119,6 +121,7 @@ static int igc_ptp_settime_i225(struct ptp_clock_info *ptp,
 	spin_lock_irqsave(&igc->tmreg_lock, flags);
 
 	igc_ptp_write_i225(igc, ts);
+	igc_tsn_restart_cycle(igc, timespec64_to_ktime(*ts));
 
 	spin_unlock_irqrestore(&igc->tmreg_lock, flags);
 
