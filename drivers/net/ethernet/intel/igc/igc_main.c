@@ -1591,7 +1591,9 @@ static int igc_tx_map(struct igc_ring *tx_ring,
 	/* Make sure there is space in the ring for the next send. */
 	igc_maybe_stop_tx(tx_ring, DESC_NEEDED);
 
-	if (netif_xmit_stopped(txring_txq(tx_ring)) || !netdev_xmit_more()) {
+	/* A launch time is placed in a cycle: it must be fetched in it. */
+	if (netif_xmit_stopped(txring_txq(tx_ring)) || !netdev_xmit_more() ||
+	    tx_ring->launchtime_enable) {
 		writel(i, tx_ring->tail);
 	}
 
@@ -3307,6 +3309,10 @@ static void igc_xdp_xmit_zc(struct igc_ring *ring)
 
 		ring->next_to_use = ntu;
 		budget--;
+
+		/* As in igc_tx_map(): a launch time must be fetched in its cycle. */
+		if (meta_req.used_desc)
+			igc_flush_tx_descriptors(ring);
 	}
 
 	if (tx_desc) {
