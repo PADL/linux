@@ -694,9 +694,16 @@ skip_cbs:
 	return 0;
 }
 
-/* BASET, re-reading BASET_H until it is stable across the BASET_L read. */
-static ktime_t igc_tsn_read_baset(struct igc_hw *hw)
+/**
+ * igc_tsn_read_baset - Read the next Qbv cycle start the hardware holds
+ * @adapter: Board private structure
+ *
+ * Re-reads BASET_H until it is stable across the BASET_L read.
+ * Return: BASET as a SYSTIM time.
+ */
+ktime_t igc_tsn_read_baset(struct igc_adapter *adapter)
 {
+	struct igc_hw *hw = &adapter->hw;
 	u32 baset_h, baset_l;
 
 	do {
@@ -721,6 +728,7 @@ static void igc_tsn_schedule_qbv_reset(struct igc_adapter *adapter)
 /**
  * igc_tsn_restart_cycle - Re-anchor the Qbv cycle after SYSTIM was set
  * @adapter: Board private structure
+ * @held: BASET as igc_tsn_read_baset() read it before SYSTIM was written
  * @systim: The time just written to SYSTIM
  *
  * BASET holds an absolute SYSTIM time, and the hardware does not follow
@@ -731,14 +739,16 @@ static void igc_tsn_schedule_qbv_reset(struct igc_adapter *adapter)
  * still ahead of the new time is left alone. Called with tmreg_lock held.
  *
  * On an I226 the hardware accepts a BASET write only if it is no later than
- * the next cycle start it holds, so only a backward step is written. A step
- * a cycle or more past that start leaves it behind SYSTIM for good, and
- * only an adapter reset restarts the cycle.
+ * the next cycle start it holds, so only a backward step is written. When
+ * SYSTIM passes that start it moves it on by one cycle, once, so a step a
+ * cycle or more past @held leaves it behind SYSTIM for good, and only an
+ * adapter reset restarts the cycle.
  */
-void igc_tsn_restart_cycle(struct igc_adapter *adapter, ktime_t systim)
+void igc_tsn_restart_cycle(struct igc_adapter *adapter, ktime_t held,
+			   ktime_t systim)
 {
 	struct igc_hw *hw = &adapter->hw;
-	ktime_t base_time, next_start;
+	ktime_t base_time;
 	u32 baset_l, baset_h;
 	int cmp;
 
@@ -753,13 +763,12 @@ void igc_tsn_restart_cycle(struct igc_adapter *adapter, ktime_t systim)
 
 	base_time = igc_tsn_next_cycle_start(adapter, systim);
 	if (igc_is_device_id_i226(hw)) {
-		next_start = igc_tsn_read_baset(hw);
-		if (ktime_compare(systim, ktime_add_ns(next_start,
+		if (ktime_compare(systim, ktime_add_ns(held,
 						       adapter->cycle_time)) >= 0) {
 			igc_tsn_schedule_qbv_reset(adapter);
 			return;
 		}
-		if (ktime_compare(base_time, next_start) >= 0)
+		if (ktime_compare(base_time, held) >= 0)
 			return;
 	}
 
