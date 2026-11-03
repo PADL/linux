@@ -77,13 +77,15 @@ static int igc_ptp_adjtime_i225(struct ptp_clock_info *ptp, s64 delta)
 					       ptp_caps);
 	struct timespec64 now, then = ns_to_timespec64(delta);
 	unsigned long flags;
+	ktime_t held;
 
 	spin_lock_irqsave(&igc->tmreg_lock, flags);
 
 	igc_ptp_read(igc, &now);
 	now = timespec64_add(now, then);
+	held = igc_tsn_read_baset(igc);
 	igc_ptp_write_i225(igc, (const struct timespec64 *)&now);
-	igc_tsn_restart_cycle(igc, timespec64_to_ktime(now));
+	igc_tsn_restart_cycle(igc, held, timespec64_to_ktime(now));
 
 	spin_unlock_irqrestore(&igc->tmreg_lock, flags);
 
@@ -117,11 +119,13 @@ static int igc_ptp_settime_i225(struct ptp_clock_info *ptp,
 	struct igc_adapter *igc = container_of(ptp, struct igc_adapter,
 					       ptp_caps);
 	unsigned long flags;
+	ktime_t held;
 
 	spin_lock_irqsave(&igc->tmreg_lock, flags);
 
+	held = igc_tsn_read_baset(igc);
 	igc_ptp_write_i225(igc, ts);
-	igc_tsn_restart_cycle(igc, timespec64_to_ktime(*ts));
+	igc_tsn_restart_cycle(igc, held, timespec64_to_ktime(*ts));
 
 	spin_unlock_irqrestore(&igc->tmreg_lock, flags);
 
