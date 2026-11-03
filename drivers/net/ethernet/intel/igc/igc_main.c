@@ -1181,10 +1181,14 @@ static __le32 igc_tx_launchtime(struct igc_ring *ring, ktime_t txtime,
 	ktime_t cycle_time = adapter->cycle_time;
 	ktime_t base_time = adapter->base_time;
 	ktime_t baset_est, end_of_cycle;
-	s64 launchtime, n;
+	s64 launchtime, since, n;
 	u64 offset;
 
-	n = div64_s64(ktime_sub_ns(now, base_time), cycle_time);
+	/* Round down before base_time too, so baset_est is never after now. */
+	since = ktime_sub(now, base_time);
+	n = div64_s64(since, cycle_time);
+	if (cycle_time * n > since)
+		n--;
 
 	baset_est = ktime_add_ns(base_time, cycle_time * (n));
 	end_of_cycle = ktime_add_ns(baset_est, cycle_time);
