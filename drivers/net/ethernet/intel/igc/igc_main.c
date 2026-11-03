@@ -1189,16 +1189,37 @@ static __le32 igc_tx_launchtime(struct igc_ring *ring, ktime_t txtime,
 				bool *insert_empty)
 {
 	struct igc_adapter *adapter = netdev_priv(ring->netdev);
-	ktime_t cycle_time = adapter->cycle_time;
-	ktime_t base_time = adapter->base_time;
-	ktime_t baset_est, end_of_cycle;
+	ktime_t baset_est, end_of_cycle, base_time, cycle_time;
+	ktime_t switch_time, next_cycle_time;
 	s64 launchtime, n;
+	unsigned int seq;
 	u64 offset;
+
+	/* The cycle the hardware runs now, not the one taprio asked for. */
+	do {
+		seq = read_seqcount_begin(&adapter->qbv_cycle_seq);
+		switch_time = adapter->qbv_switch_time;
+		next_cycle_time = adapter->qbv_cycle_time;
+		if (ktime_compare(now, switch_time) < 0) {
+			base_time = adapter->qbv_prev_base_time;
+			cycle_time = adapter->qbv_prev_cycle_time;
+		} else {
+			base_time = adapter->qbv_base_time;
+			cycle_time = next_cycle_time;
+		}
+	} while (read_seqcount_retry(&adapter->qbv_cycle_seq, seq));
 
 	n = div64_s64(ktime_sub_ns(now, base_time), cycle_time);
 
 	baset_est = ktime_add_ns(base_time, cycle_time * (n));
 	end_of_cycle = ktime_add_ns(baset_est, cycle_time);
+
+	/* The previous cycle ends at BASET, where the new one starts. */
+	if (ktime_compare(now, switch_time) < 0 &&
+	    ktime_compare(end_of_cycle, switch_time) >= 0)
+		end_of_cycle = switch_time;
+	else
+		next_cycle_time = cycle_time;
 
 	if (ktime_compare(txtime, end_of_cycle) >= 0) {
 		if (baset_est != ring->last_ff_cycle) {
@@ -1212,6 +1233,11 @@ static __le32 igc_tx_launchtime(struct igc_ring *ring, ktime_t txtime,
 			if (ktime_compare(end_of_cycle, ring->last_tx_cycle) != 0)
 				*insert_empty = true;
 		}
+		/* In the next cycle, which may be a new schedule's first. */
+		launchtime = ktime_sub(txtime, end_of_cycle);
+		cycle_time = next_cycle_time;
+	} else {
+		launchtime = ktime_sub(txtime, baset_est);
 	}
 
 	/* Introducing a window at end of cycle on which packets
@@ -1226,7 +1252,6 @@ static __le32 igc_tx_launchtime(struct igc_ring *ring, ktime_t txtime,
 
 	ring->last_tx_cycle = end_of_cycle;
 
-	launchtime = ktime_sub_ns(txtime, baset_est);
 	if (launchtime <= 0)
 		return 0;
 
@@ -5234,6 +5259,9 @@ static int igc_sw_init(struct igc_adapter *adapter)
 
 	spin_lock_init(&adapter->stats64_lock);
 	spin_lock_init(&adapter->qbv_tx_lock);
+	seqcount_spinlock_init(&adapter->qbv_cycle_seq, &adapter->tmreg_lock);
+	adapter->qbv_cycle_time = NSEC_PER_SEC;
+	adapter->qbv_prev_cycle_time = NSEC_PER_SEC;
 	/* Assume MSI-X interrupts, will be checked during IRQ allocation */
 	adapter->flags |= IGC_FLAG_HAS_MSIX;
 
