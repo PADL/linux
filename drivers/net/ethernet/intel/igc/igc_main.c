@@ -103,6 +103,8 @@ void igc_reset(struct igc_adapter *adapter)
 	fc->current_mode = fc->requested_mode;
 
 	hw->mac.ops.reset_hw(hw);
+	/* The reset stopped the Qbv cycle; igc_tsn_reset() restarts it. */
+	clear_bit(__IGC_QBV_RESET_PENDING, &adapter->state);
 
 	if (hw->mac.ops.init_hw(hw))
 		netdev_err(dev, "Error on hardware initialization\n");
@@ -6221,6 +6223,12 @@ static int __igc_open(struct net_device *netdev, bool resuming)
 	if (err)
 		goto err_setup_rx;
 
+	/* A PHC step while down left the Qbv cycle behind SYSTIM. */
+	if (test_bit(__IGC_QBV_RESET_PENDING, &adapter->state)) {
+		igc_ptp_suspend(adapter);
+		igc_reset(adapter);
+	}
+
 	igc_power_up_link(adapter);
 
 	igc_configure(adapter);
@@ -6249,6 +6257,13 @@ static int __igc_open(struct net_device *netdev, bool resuming)
 	/* start the watchdog. */
 	hw->mac.get_link_status = true;
 	schedule_work(&adapter->watchdog_task);
+
+	/* A step after the check above may have found __IGC_DOWN still set;
+	 * pairs with test_and_set_bit() in igc_tsn_schedule_qbv_reset().
+	 */
+	smp_mb();
+	if (test_bit(__IGC_QBV_RESET_PENDING, &adapter->state))
+		schedule_work(&adapter->reset_task);
 
 	return IGC_SUCCESS;
 
