@@ -86,6 +86,11 @@ static int igc_ptp_adjtime_i225(struct ptp_clock_info *ptp, s64 delta)
 	held = igc_tsn_read_baset(igc);
 	igc_ptp_write_i225(igc, (const struct timespec64 *)&now);
 	igc_tsn_restart_cycle(igc, held, timespec64_to_ktime(now));
+	/* While down, SYSTIM may be mid-reset or unreadable; move the saved
+	 * time that the next igc_ptp_time_restore() writes back instead.
+	 */
+	if (test_bit(__IGC_DOWN, &igc->state))
+		igc->prev_ptp_time = timespec64_add(igc->prev_ptp_time, then);
 
 	spin_unlock_irqrestore(&igc->tmreg_lock, flags);
 
@@ -126,6 +131,10 @@ static int igc_ptp_settime_i225(struct ptp_clock_info *ptp,
 	held = igc_tsn_read_baset(igc);
 	igc_ptp_write_i225(igc, ts);
 	igc_tsn_restart_cycle(igc, held, timespec64_to_ktime(*ts));
+	if (test_bit(__IGC_DOWN, &igc->state)) {
+		igc->prev_ptp_time = *ts;
+		igc->ptp_reset_start = ktime_get();
+	}
 
 	spin_unlock_irqrestore(&igc->tmreg_lock, flags);
 
@@ -1243,8 +1252,13 @@ void igc_ptp_init(struct igc_adapter *adapter)
 
 static void igc_ptp_time_save(struct igc_adapter *adapter)
 {
+	unsigned long flags;
+
+	/* Serialised with a step updating the saved time while down. */
+	spin_lock_irqsave(&adapter->tmreg_lock, flags);
 	igc_ptp_read(adapter, &adapter->prev_ptp_time);
 	adapter->ptp_reset_start = ktime_get();
+	spin_unlock_irqrestore(&adapter->tmreg_lock, flags);
 }
 
 static void igc_ptp_time_restore(struct igc_adapter *adapter)
