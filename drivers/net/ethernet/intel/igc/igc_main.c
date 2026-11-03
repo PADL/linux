@@ -1162,10 +1162,11 @@ static clockid_t igc_skb_txtime_clockid(const struct sk_buff *skb)
 static ktime_t igc_skb_txtime_now(struct igc_adapter *adapter,
 				  struct sk_buff *skb, ktime_t *txtime)
 {
+	ktime_t clock, offset, systim;
 	struct sock *sk = skb->sk;
-	ktime_t clock, systim;
 	struct timespec64 ts;
 	unsigned long flags;
+	clockid_t clockid;
 
 	if (sk && sk_fullsock(sk) && sk->sk_family == AF_XDP) {
 		spin_lock_irqsave(&adapter->tmreg_lock, flags);
@@ -1174,9 +1175,12 @@ static ktime_t igc_skb_txtime_now(struct igc_adapter *adapter,
 		return timespec64_to_ktime(ts);
 	}
 
-	systim = igc_tx_systim(adapter, igc_skb_txtime_clockid(skb), &clock);
-	*txtime = ktime_add(ktime_sub(*txtime, clock), systim);
-	return systim;
+	/* SYSTIM at the end of the reads, not at the narrowest bracket. */
+	clockid = igc_skb_txtime_clockid(skb);
+	systim = igc_tx_systim(adapter, clockid, &clock);
+	offset = ktime_sub(systim, clock);
+	*txtime = ktime_add(*txtime, offset);
+	return ktime_add(igc_tx_clock_read(clockid), offset);
 }
 
 /* @now is in @txtime's clock: the Qbv cycle is estimated from it. */
