@@ -450,6 +450,16 @@ u32 igc_fpe_get_supported_frag_size(u32 frag_size)
 	return TX_MAX_FRAG_SIZE;
 }
 
+/* The first Qbv cycle start after @systim, in the phase of the base time. */
+static ktime_t igc_tsn_next_cycle_start(struct igc_adapter *adapter,
+					ktime_t systim)
+{
+	s64 n = div64_s64(ktime_sub_ns(systim, adapter->base_time),
+			  adapter->cycle_time);
+
+	return ktime_add_ns(adapter->base_time, (n + 1) * adapter->cycle_time);
+}
+
 static int igc_tsn_enable_offload(struct igc_adapter *adapter)
 {
 	struct igc_hw *hw = &adapter->hw;
@@ -633,14 +643,14 @@ skip_cbs:
 	cycle = adapter->cycle_time;
 	base_time = adapter->base_time;
 
+	/* Not across a SYSTIM step: see igc_tsn_restart_cycle(). */
+	spin_lock_irqsave(&adapter->tmreg_lock, flags);
 	nsec = rd32(IGC_SYSTIML);
 	sec = rd32(IGC_SYSTIMH);
 
 	systim = ktime_set(sec, nsec);
 	if (ktime_compare(systim, base_time) > 0) {
-		s64 n = div64_s64(ktime_sub_ns(systim, base_time), cycle);
-
-		base_time = ktime_add_ns(base_time, (n + 1) * cycle);
+		base_time = igc_tsn_next_cycle_start(adapter, systim);
 	} else {
 		if (igc_is_device_id_i226(hw)) {
 			ktime_t adjust_time, expires_time;
@@ -679,8 +689,42 @@ skip_cbs:
 	if (tqavctrl & IGC_TQAVCTRL_FUTSCDDIS)
 		wr32(IGC_BASET_L, 0);
 	wr32(IGC_BASET_L, baset_l);
+	spin_unlock_irqrestore(&adapter->tmreg_lock, flags);
 
 	return 0;
+}
+
+/**
+ * igc_tsn_restart_cycle - Re-anchor the Qbv cycle after SYSTIM was set
+ * @adapter: Board private structure
+ * @systim: The time just written to SYSTIM
+ *
+ * BASET holds an absolute SYSTIM time, and the hardware does not follow
+ * a step of the clock: stepped back, no queue's window opens until SYSTIM
+ * reaches the old cycle start again, and every Tx queue stalls. Restart
+ * the cycle from the new time, keeping the phase of the configured base
+ * time, as igc_tsn_enable_offload() would. A configured base time that is
+ * still ahead of the new time is left alone. Called with tmreg_lock held.
+ */
+void igc_tsn_restart_cycle(struct igc_adapter *adapter, ktime_t systim)
+{
+	struct igc_hw *hw = &adapter->hw;
+	u32 baset_l, baset_h;
+	ktime_t base_time;
+
+	lockdep_assert_held(&adapter->tmreg_lock);
+
+	if (!igc_tsn_is_tx_mode_in_tsn(adapter) ||
+	    ktime_compare(systim, adapter->base_time) <= 0)
+		return;
+
+	base_time = igc_tsn_next_cycle_start(adapter, systim);
+	baset_h = div_s64_rem(base_time, NSEC_PER_SEC, &baset_l);
+	wr32(IGC_BASET_H, baset_h);
+	/* As in igc_tsn_enable_offload() when FutScdDis is set. */
+	if (rd32(IGC_TQAVCTRL) & IGC_TQAVCTRL_FUTSCDDIS)
+		wr32(IGC_BASET_L, 0);
+	wr32(IGC_BASET_L, baset_l);
 }
 
 int igc_tsn_reset(struct igc_adapter *adapter)
