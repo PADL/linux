@@ -1114,8 +1114,12 @@ static ktime_t igc_tx_systim(struct igc_adapter *adapter, clockid_t clockid,
 	if (best == KTIME_MAX) {
 		systim = timespec64_to_ktime(ts);
 		*clock = after;
+		best = -1;
 	}
 
+	netdev_dbg(adapter->netdev,
+		   "systim %lld clock %d at %lld bracket %lld ns after %d reads\n",
+		   systim, clockid, *clock, best, i);
 	return systim;
 }
 
