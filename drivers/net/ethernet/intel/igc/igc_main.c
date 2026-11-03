@@ -1060,6 +1060,56 @@ static ktime_t igc_tx_clock_now(struct igc_adapter *adapter,
 	return ktime_add(clock->systim, ktime_sub(ktime_get(), clock->mono));
 }
 
+/* @clockid's time now: CLOCK_REALTIME, CLOCK_MONOTONIC or CLOCK_TAI, the
+ * clocks SO_TXTIME accepts (sockopt_validate_clockid()).
+ */
+static ktime_t igc_txtime_clock_now(clockid_t clockid)
+{
+	switch (clockid) {
+	case CLOCK_REALTIME:
+		return ktime_get_real();
+	case CLOCK_MONOTONIC:
+		return ktime_get();
+	default:
+		return ktime_get_clocktai();
+	}
+}
+
+/* SYSTIM now, with @txtime moved into SYSTIM from its socket's SO_TXTIME
+ * clock; an AF_XDP launch time is SYSTIM already. Any other skb keeps
+ * CLOCK_TAI, and its @txtime is left as it is.
+ */
+static ktime_t igc_skb_txtime_now(struct igc_adapter *adapter,
+				  struct sk_buff *skb, ktime_t *txtime)
+{
+	ktime_t before, after, systim;
+	struct sock *sk = skb->sk;
+	struct timespec64 ts;
+	unsigned long flags;
+	clockid_t clockid;
+
+	if (!*txtime || !sk || !sk_fullsock(sk))
+		return ktime_get_clocktai();
+	if (sk->sk_family != AF_XDP && !sock_flag(sk, SOCK_TXTIME))
+		return ktime_get_clocktai();
+
+	clockid = READ_ONCE(sk->sk_clockid);
+	spin_lock_irqsave(&adapter->tmreg_lock, flags);
+	before = igc_txtime_clock_now(clockid);
+	igc_ptp_read(adapter, &ts);
+	after = igc_txtime_clock_now(clockid);
+	spin_unlock_irqrestore(&adapter->tmreg_lock, flags);
+
+	systim = timespec64_to_ktime(ts);
+	if (sk->sk_family == AF_XDP)
+		return systim;
+
+	/* SYSTIML latched between the two reads: take their midpoint. */
+	before = ktime_add_ns(before, ktime_sub(after, before) / 2);
+	*txtime = ktime_add(ktime_sub(*txtime, before), systim);
+	return systim;
+}
+
 /* @now is in @txtime's clock: the Qbv cycle is estimated from it. */
 static __le32 igc_tx_launchtime(struct igc_ring *ring, ktime_t txtime,
 				ktime_t now, bool *first_flag,
@@ -1629,7 +1679,7 @@ static netdev_tx_t igc_xmit_frame_ring(struct sk_buff *skb,
 	__le32 launch_time = 0;
 	u32 tx_flags = 0;
 	unsigned short f;
-	ktime_t txtime;
+	ktime_t txtime, now;
 	u8 hdr_len = 0;
 	int tso = 0;
 
@@ -1654,8 +1704,9 @@ static netdev_tx_t igc_xmit_frame_ring(struct sk_buff *skb,
 
 	txtime = skb->tstamp;
 	skb->tstamp = ktime_set(0, 0);
-	launch_time = igc_tx_launchtime(tx_ring, txtime, ktime_get_clocktai(),
-					&first_flag, &insert_empty);
+	now = igc_skb_txtime_now(adapter, skb, &txtime);
+	launch_time = igc_tx_launchtime(tx_ring, txtime, now, &first_flag,
+					&insert_empty);
 
 	if (insert_empty) {
 		/* Reset the launch time if the required empty frame fails to
