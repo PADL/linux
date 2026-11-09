@@ -835,29 +835,8 @@ static u32 igc_hash_mc_addr(struct igc_hw *hw, u8 *mc_addr)
 	return hash_value;
 }
 
-/**
- *  igc_sync_mta - Bring the Multicast Table Array in line with mta_shadow
- *  @hw: pointer to the HW structure
- *  @write: rewrite the registers that differ
- *
- *  Return: the number of registers that differed from mta_shadow
- **/
-static u32 igc_sync_mta(struct igc_hw *hw, bool write)
-{
-	u32 i, value, differed = 0;
-
-	for (i = 0; i < hw->mac.mta_reg_count; i++) {
-		value = array_rd32(IGC_MTA, i);
-		if (value == hw->mac.mta_shadow[i])
-			continue;
-
-		differed++;
-		if (write)
-			array_wr32(IGC_MTA, i, hw->mac.mta_shadow[i]);
-	}
-
-	return differed;
-}
+/* Passes over the Multicast Table Array before giving up on a register */
+#define IGC_MTA_PASSES	3
 
 /**
  *  igc_update_mc_addr_list - Update Multicast addresses
@@ -865,16 +844,16 @@ static u32 igc_sync_mta(struct igc_hw *hw, bool write)
  *  @mc_addr_list: array of multicast addresses to program
  *  @mc_addr_count: number of multicast addresses to program
  *
- *  Updates the Multicast Table Array registers that differ from the list
- *  and reads the table back, since the I226 has been seen to store an MTA
- *  write in another MTA register while receiving.
+ *  Writes the Multicast Table Array registers that differ from the list
+ *  and reads the table back.
  *  The caller must have a packed mc_addr_list of multicast addresses.
  **/
 void igc_update_mc_addr_list(struct igc_hw *hw,
 			     u8 *mc_addr_list, u32 mc_addr_count)
 {
 	u32 hash_value, hash_bit, hash_reg;
-	int i;
+	bool differed;
+	int pass, i;
 
 	/* clear mta_shadow */
 	memset(&hw->mac.mta_shadow, 0, sizeof(hw->mac.mta_shadow));
@@ -890,12 +869,22 @@ void igc_update_mc_addr_list(struct igc_hw *hw,
 		mc_addr_list += ETH_ALEN;
 	}
 
-	for (i = 0; i < IGC_MTA_WRITE_TRIES; i++)
-		if (!igc_sync_mta(hw, true))
+	/* The I226 can store an MTA write in another MTA register while
+	 * receiving, so read each register back and rewrite it if it differs.
+	 * Each write is flushed by the next (non-posted) register read.
+	 */
+	for (pass = 0; pass < IGC_MTA_PASSES; pass++) {
+		differed = false;
+		for (i = hw->mac.mta_reg_count - 1; i >= 0; i--) {
+			if (array_rd32(IGC_MTA, i) == hw->mac.mta_shadow[i])
+				continue;
+			array_wr32(IGC_MTA, i, hw->mac.mta_shadow[i]);
+			differed = true;
+		}
+		if (!differed)
 			return;
+	}
 
-	if (igc_sync_mta(hw, false) && !IGC_REMOVED(hw->hw_addr) &&
-	    net_ratelimit())
-		netdev_warn(igc_get_hw_dev(hw),
-			    "Multicast Table Array does not read back as written\n");
+	wrfl();
+	hw_dbg("Failed to update the Multicast Table Array, too many retries\n");
 }
