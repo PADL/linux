@@ -730,8 +730,6 @@
 
 /* Maximum size of the MTA register table in all supported adapters */
 #define MAX_MTA_REG			128
-/* Passes writing the MTA registers that differ before giving up */
-#define IGC_MTA_WRITE_TRIES		3
 
 /* EEE defines */
 #define IGC_IPCNFG_EEE_2_5G_AN		0x00000010 /* IPCNFG EEE Ena 2.5G AN */
