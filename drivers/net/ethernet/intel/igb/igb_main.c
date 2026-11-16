@@ -1975,7 +1975,9 @@ static void igb_configure(struct igb_adapter *adapter)
 	int i;
 
 	igb_get_hw_control(adapter);
+	netif_addr_lock_bh(netdev);
 	igb_set_rx_mode(netdev);
+	netif_addr_unlock_bh(netdev);
 	igb_setup_tx_mode(adapter);
 
 	igb_restore_vlan(adapter);
@@ -9547,7 +9549,9 @@ static int __igb_shutdown(struct pci_dev *pdev, bool *enable_wake,
 
 	if (wufc) {
 		igb_setup_rctl(adapter);
+		netif_addr_lock_bh(netdev);
 		igb_set_rx_mode(netdev);
+		netif_addr_unlock_bh(netdev);
 
 		/* turn on all-multi mode if wake on multicast is enabled */
 		if (wufc & E1000_WUFC_MC) {
