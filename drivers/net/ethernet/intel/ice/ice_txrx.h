@@ -423,6 +423,8 @@ void ice_clean_rx_ring(struct ice_rx_ring *rx_ring);
 int ice_setup_tx_ring(struct ice_tx_ring *tx_ring);
 int ice_setup_rx_ring(struct ice_rx_ring *rx_ring);
 int ice_alloc_setup_tstamp_ring(struct ice_tx_ring *tx_ring);
+void ice_tstamp_ring_add(struct ice_tstamp_ring *tstamp_ring, u16 tx_idx,
+			 ktime_t txtime);
 void ice_free_tx_ring(struct ice_tx_ring *tx_ring);
 void ice_free_rx_ring(struct ice_rx_ring *rx_ring);
 int ice_napi_poll(struct napi_struct *napi, int budget);
