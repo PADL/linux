@@ -91,6 +91,8 @@ ice_get_vlan_tci(const union ice_32b_rx_flex_desc *rx_desc)
 	return 0;
 }
 
+void ice_xdp_txtime_update_tail(struct ice_tx_ring *xdp_ring);
+
 /**
  * ice_xdp_ring_update_tail - Updates the XDP Tx ring tail register
  * @xdp_ring: XDP Tx ring
@@ -99,6 +101,11 @@ ice_get_vlan_tci(const union ice_32b_rx_flex_desc *rx_desc)
  */
 static inline void ice_xdp_ring_update_tail(struct ice_tx_ring *xdp_ring)
 {
+	if (ice_is_txtime_cfg(xdp_ring)) {
+		ice_xdp_txtime_update_tail(xdp_ring);
+		return;
+	}
+
 	/* Force memory writes to complete before letting h/w
 	 * know there are new descriptors to fetch.
 	 */
