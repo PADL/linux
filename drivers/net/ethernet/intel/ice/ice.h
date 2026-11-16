@@ -757,34 +757,6 @@ static inline void ice_set_ring_xdp(struct ice_tx_ring *ring)
 }
 
 /**
- * ice_is_txtime_ena - check if Tx Time is enabled on the Tx ring
- * @ring: pointer to Tx ring
- *
- * Return: true if the Tx ring has Tx Time enabled, false otherwise.
- */
-static inline bool ice_is_txtime_ena(const struct ice_tx_ring *ring)
-{
-	struct ice_vsi *vsi = ring->vsi;
-	struct ice_pf *pf = vsi->back;
-
-	if (vsi->type != ICE_VSI_PF)
-		return false;
-
-	return test_bit(ring->q_index,  pf->txtime_txqs);
-}
-
-/**
- * ice_is_txtime_cfg - check if Tx Time is configured on the Tx ring
- * @ring: pointer to Tx ring
- *
- * Return: true if the Tx ring is configured for Tx ring, false otherwise.
- */
-static inline bool ice_is_txtime_cfg(const struct ice_tx_ring *ring)
-{
-	return test_bit(ICE_TX_RING_FLAGS_TXTIME, ring->flags);
-}
-
-/**
  * ice_get_xp_from_qid - get ZC XSK buffer pool bound to a queue ID
  * @vsi: pointer to VSI
  * @qid: index of a queue to look at XSK buff pool presence
@@ -801,6 +773,44 @@ static inline struct xsk_buff_pool *ice_get_xp_from_qid(struct ice_vsi *vsi,
 		return NULL;
 
 	return (pool && pool->dev) ? pool : NULL;
+}
+
+/**
+ * ice_is_txtime_ena - check if Tx Time is enabled on the Tx ring
+ * @ring: pointer to Tx ring
+ *
+ * An XDP ring has Tx Time enabled when its queue does and an AF_XDP
+ * zero-copy socket is bound to that queue.
+ *
+ * Return: true if the Tx ring has Tx Time enabled, false otherwise.
+ */
+static inline bool ice_is_txtime_ena(const struct ice_tx_ring *ring)
+{
+	struct ice_vsi *vsi = ring->vsi;
+	struct ice_pf *pf = vsi->back;
+	u16 q_index = ring->q_index;
+
+	if (vsi->type != ICE_VSI_PF)
+		return false;
+
+	if (ice_ring_is_xdp(ring)) {
+		q_index -= vsi->alloc_txq;
+		if (!ice_get_xp_from_qid(vsi, q_index))
+			return false;
+	}
+
+	return test_bit(q_index, pf->txtime_txqs);
+}
+
+/**
+ * ice_is_txtime_cfg - check if Tx Time is configured on the Tx ring
+ * @ring: pointer to Tx ring
+ *
+ * Return: true if the Tx ring is configured for Tx ring, false otherwise.
+ */
+static inline bool ice_is_txtime_cfg(const struct ice_tx_ring *ring)
+{
+	return test_bit(ICE_TX_RING_FLAGS_TXTIME, ring->flags);
 }
 
 /**
