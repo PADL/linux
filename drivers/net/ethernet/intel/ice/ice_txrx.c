@@ -466,6 +466,49 @@ int ice_alloc_setup_tstamp_ring(struct ice_tx_ring *tx_ring)
 }
 
 /**
+ * ice_tstamp_ring_add - add a Tx time stamp descriptor
+ * @tstamp_ring: Time Stamp ring to add the descriptor to
+ * @tx_idx: Tx ring index up to which the hardware may fetch descriptors
+ * @txtime: time at which the hardware transmits those descriptors
+ *
+ * The caller notifies the hardware by writing the Time Stamp ring's tail.
+ */
+void ice_tstamp_ring_add(struct ice_tstamp_ring *tstamp_ring, u16 tx_idx,
+			 ktime_t txtime)
+{
+	struct timespec64 ts = ktime_to_timespec64(txtime);
+	u32 tstamp_count = tstamp_ring->count;
+	u32 j = tstamp_ring->next_to_use;
+	struct ice_ts_desc *ts_desc;
+	u32 tstamp;
+
+	tstamp = ts.tv_nsec >> ICE_TXTIME_CTX_RESOLUTION_128NS;
+
+	ts_desc = ICE_TS_DESC(tstamp_ring, j);
+	ts_desc->tx_desc_idx_tstamp = ice_build_tstamp_desc(tx_idx, tstamp);
+
+	j++;
+	if (j == tstamp_count) {
+		u32 fetch = tstamp_count - tstamp_ring->tx_ring->count;
+
+		j = 0;
+
+		/* To prevent an MDD, when wrapping the tstamp ring
+		 * create additional TS descriptors equal to the number
+		 * of the fetch TS descriptors value. HW will merge the
+		 * TS descriptors with the same timestamp value into a
+		 * single descriptor.
+		 */
+		for (; j < fetch; j++) {
+			ts_desc = ICE_TS_DESC(tstamp_ring, j);
+			ts_desc->tx_desc_idx_tstamp =
+			       ice_build_tstamp_desc(tx_idx, tstamp);
+		}
+	}
+	tstamp_ring->next_to_use = j;
+}
+
+/**
  * ice_setup_tx_ring - Allocate the Tx descriptors
  * @tx_ring: the Tx ring to set up
  *
@@ -1523,45 +1566,14 @@ ice_tx_map(struct ice_tx_ring *tx_ring, struct ice_tx_buf *first,
 
 	if (ice_is_txtime_cfg(tx_ring)) {
 		struct ice_tstamp_ring *tstamp_ring;
-		u32 tstamp_count, j;
-		struct ice_ts_desc *ts_desc;
-		struct timespec64 ts;
-		u32 tstamp;
 
 		smp_rmb();	/* order flag read before pointer read */
 		tstamp_ring = READ_ONCE(tx_ring->tstamp_ring);
 		if (unlikely(!tstamp_ring))
 			goto ring_kick;
 
-		tstamp_count = tstamp_ring->count;
-		j = tstamp_ring->next_to_use;
-
-		ts = ktime_to_timespec64(first->skb->tstamp);
-		tstamp = ts.tv_nsec >> ICE_TXTIME_CTX_RESOLUTION_128NS;
-
-		ts_desc = ICE_TS_DESC(tstamp_ring, j);
-		ts_desc->tx_desc_idx_tstamp = ice_build_tstamp_desc(i, tstamp);
-
-		j++;
-		if (j == tstamp_count) {
-			u32 fetch = tstamp_count - tx_ring->count;
-
-			j = 0;
-
-			/* To prevent an MDD, when wrapping the tstamp ring
-			 * create additional TS descriptors equal to the number
-			 * of the fetch TS descriptors value. HW will merge the
-			 * TS descriptors with the same timestamp value into a
-			 * single descriptor.
-			 */
-			for (; j < fetch; j++) {
-				ts_desc = ICE_TS_DESC(tstamp_ring, j);
-				ts_desc->tx_desc_idx_tstamp =
-				       ice_build_tstamp_desc(i, tstamp);
-			}
-		}
-		tstamp_ring->next_to_use = j;
-		writel_relaxed(j, tstamp_ring->tail);
+		ice_tstamp_ring_add(tstamp_ring, i, first->skb->tstamp);
+		writel_relaxed(tstamp_ring->next_to_use, tstamp_ring->tail);
 	} else {
 ring_kick:
 		writel_relaxed(i, tx_ring->tail);
