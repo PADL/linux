@@ -483,34 +483,8 @@ static u32 igb_hash_mc_addr(struct e1000_hw *hw, u8 *mc_addr)
 	return hash_value;
 }
 
-/**
- * igb_i21x_hw_doublecheck - double checks potential HW issue in i21X
- * @hw: pointer to the HW structure
- *
- * Checks if multicast array is wrote correctly
- * If not then rewrites again to register
- **/
-static void igb_i21x_hw_doublecheck(struct e1000_hw *hw)
-{
-	int failed_cnt = 3;
-	bool is_failed;
-	int i;
-
-	do {
-		is_failed = false;
-		for (i = hw->mac.mta_reg_count - 1; i >= 0; i--) {
-			if (array_rd32(E1000_MTA, i) != hw->mac.mta_shadow[i]) {
-				is_failed = true;
-				array_wr32(E1000_MTA, i, hw->mac.mta_shadow[i]);
-				wrfl();
-			}
-		}
-		if (is_failed && --failed_cnt <= 0) {
-			hw_dbg("Failed to update MTA_REGISTER, too many retries");
-			break;
-		}
-	} while (is_failed);
-}
+/* Passes over the Multicast Table Array before giving up on a register */
+#define IGB_MTA_PASSES	3
 
 /**
  *  igb_update_mc_addr_list - Update Multicast addresses
@@ -518,14 +492,16 @@ static void igb_i21x_hw_doublecheck(struct e1000_hw *hw)
  *  @mc_addr_list: array of multicast addresses to program
  *  @mc_addr_count: number of multicast addresses to program
  *
- *  Updates entire Multicast Table Array.
+ *  Writes the Multicast Table Array registers that differ from the list
+ *  and reads the table back.
  *  The caller must have a packed mc_addr_list of multicast addresses.
  **/
 void igb_update_mc_addr_list(struct e1000_hw *hw,
 			     u8 *mc_addr_list, u32 mc_addr_count)
 {
 	u32 hash_value, hash_bit, hash_reg;
-	int i;
+	bool differed;
+	int pass, i;
 
 	/* clear mta_shadow */
 	memset(&hw->mac.mta_shadow, 0, sizeof(hw->mac.mta_shadow));
@@ -541,12 +517,26 @@ void igb_update_mc_addr_list(struct e1000_hw *hw,
 		mc_addr_list += (ETH_ALEN);
 	}
 
-	/* replace the entire MTA table */
-	for (i = hw->mac.mta_reg_count - 1; i >= 0; i--)
-		array_wr32(E1000_MTA, i, hw->mac.mta_shadow[i]);
+	/* Write only the registers that differ, so that the registers of the
+	 * groups that stay are not rewritten, and read each one back, as the
+	 * i210 and i211 may not accept an MTA write when multicast addresses
+	 * are added and removed in a short time. Each write is flushed by the
+	 * next (non-posted) register read.
+	 */
+	for (pass = 0; pass < IGB_MTA_PASSES; pass++) {
+		differed = false;
+		for (i = hw->mac.mta_reg_count - 1; i >= 0; i--) {
+			if (array_rd32(E1000_MTA, i) == hw->mac.mta_shadow[i])
+				continue;
+			array_wr32(E1000_MTA, i, hw->mac.mta_shadow[i]);
+			differed = true;
+		}
+		if (!differed)
+			return;
+	}
+
 	wrfl();
-	if (hw->mac.type == e1000_i210 || hw->mac.type == e1000_i211)
-		igb_i21x_hw_doublecheck(hw);
+	hw_dbg("Failed to update MTA_REGISTER, too many retries");
 }
 
 /**
