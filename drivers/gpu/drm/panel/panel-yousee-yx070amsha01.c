@@ -45,12 +45,10 @@ static int yx070amsha01_update_status(struct backlight_device *bl)
 
 	/* brightness on the hardware is 1-4096 */
 	ret = mipi_dsi_dcs_set_display_brightness_large(dsi, brightness + 1);
-	if (ret < 0)
-		return ret;
 
 	dsi->mode_flags |= MIPI_DSI_MODE_LPM;
 
-	return 0;
+	return ret;
 }
 
 static const struct backlight_ops yx070amsha01_bl_ops = {
