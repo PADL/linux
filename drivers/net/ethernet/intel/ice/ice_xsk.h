@@ -9,6 +9,8 @@
 
 struct ice_vsi;
 
+extern const struct xsk_tx_metadata_ops ice_xsk_tx_metadata_ops;
+
 #ifdef CONFIG_XDP_SOCKETS
 int ice_xsk_pool_setup(struct ice_vsi *vsi, struct xsk_buff_pool *pool,
 		       u16 qid);
