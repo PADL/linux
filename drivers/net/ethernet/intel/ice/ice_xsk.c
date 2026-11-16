@@ -355,6 +355,47 @@ bool ice_alloc_rx_bufs_zc(struct ice_rx_ring *rx_ring,
 }
 
 /**
+ * ice_xsk_txtime_last_rs - find the descriptor to report completion up to
+ * @xdp_ring: XDP Tx ring with Tx Time configured
+ *
+ * Frames on a Tx Time ring complete in ring order, but the newest may wait
+ * for a launch time well ahead while older ones are long done. Scan from
+ * next_to_clean to the first descriptor that asked for a report and has not
+ * received one.
+ *
+ * Return: index of the last completed descriptor, or of a descriptor without
+ * DD set if none has completed.
+ */
+static u16 ice_xsk_txtime_last_rs(const struct ice_tx_ring *xdp_ring)
+{
+	const __le64 rs = cpu_to_le64(ICE_TX_DESC_CMD_RS << ICE_TXD_QW1_CMD_S);
+	const __le64 dd = cpu_to_le64(ICE_TX_DESC_DTYPE_DESC_DONE);
+	u16 ntu = xdp_ring->next_to_use;
+	u16 i = xdp_ring->next_to_clean;
+	bool done = false;
+	u16 last_rs;
+
+	/* as ice_clean_xdp_irq_zc() when nothing is outstanding */
+	last_rs = ntu ? ntu - 1 : xdp_ring->count - 1;
+
+	while (i != ntu) {
+		__le64 qw1 = ICE_TX_DESC(xdp_ring, i)->cmd_type_offset_bsz;
+
+		if (qw1 & dd) {
+			last_rs = i;
+			done = true;
+		} else if (qw1 & rs) {
+			return done ? last_rs : i;
+		}
+
+		if (++i == xdp_ring->count)
+			i = 0;
+	}
+
+	return last_rs;
+}
+
+/**
  * ice_clean_xdp_irq_zc - produce AF_XDP descriptors to CQ
  * @xdp_ring: XDP Tx ring
  * @xsk_pool: AF_XDP buffer pool pointer
@@ -371,7 +412,11 @@ static u32 ice_clean_xdp_irq_zc(struct ice_tx_ring *xdp_ring,
 	u16 last_rs;
 	int i;
 
-	last_rs = xdp_ring->next_to_use ? xdp_ring->next_to_use - 1 : cnt - 1;
+	if (ice_is_txtime_cfg(xdp_ring))
+		last_rs = ice_xsk_txtime_last_rs(xdp_ring);
+	else
+		last_rs = xdp_ring->next_to_use ? xdp_ring->next_to_use - 1 :
+						  cnt - 1;
 	tx_desc = ICE_TX_DESC(xdp_ring, last_rs);
 	if (tx_desc->cmd_type_offset_bsz &
 	    cpu_to_le64(ICE_TX_DESC_DTYPE_DESC_DONE)) {
@@ -783,6 +828,83 @@ static void ice_fill_tx_hw_ring(struct ice_tx_ring *xdp_ring,
 }
 
 /**
+ * ice_xsk_request_launch_time - AF_XDP Tx metadata launch time request
+ * @launch_time: requested launch time, PHC time in nanoseconds
+ * @priv: pointer to the ktime_t that receives it
+ */
+static void ice_xsk_request_launch_time(u64 launch_time, void *priv)
+{
+	*(ktime_t *)priv = ns_to_ktime(launch_time);
+}
+
+const struct xsk_tx_metadata_ops ice_xsk_tx_metadata_ops = {
+	.tmo_request_launch_time	= ice_xsk_request_launch_time,
+};
+
+/**
+ * ice_xmit_txtime_zc - release AF_XDP frames through the Time Stamp ring
+ * @xdp_ring: XDP ring with Tx Time configured
+ * @xsk_pool: XSK buffer pool the frames came from
+ * @descs: AF_XDP descriptors just produced on @xdp_ring
+ * @nb_pkts: count of descriptors in @descs
+ * @ntu: XDP ring index of the first of them
+ *
+ * Each frame is released at the launch time in its Tx metadata. A frame
+ * without one goes with the frame before it in the batch or, first in the
+ * batch, at once but not ahead of the ring's last time. Every frame asks for
+ * a completion report, so that one waiting for its launch time does not hold
+ * back reports for those before it.
+ */
+static void ice_xmit_txtime_zc(struct ice_tx_ring *xdp_ring,
+			       struct xsk_buff_pool *xsk_pool,
+			       const struct xdp_desc *descs, u32 nb_pkts,
+			       u16 ntu)
+{
+	struct ice_tstamp_ring *tstamp_ring;
+	ktime_t txtime = KTIME_MAX;
+	bool sof = true;
+	u32 i;
+
+	smp_rmb();	/* order flag read before pointer read */
+	tstamp_ring = READ_ONCE(xdp_ring->tstamp_ring);
+	if (unlikely(!tstamp_ring))
+		return;
+
+	for (i = 0; i < nb_pkts; i++) {
+		const struct xdp_desc *desc = &descs[i];
+		struct ice_tx_desc *tx_desc;
+		u16 idx = ntu;
+
+		if (++ntu == xdp_ring->count)
+			ntu = 0;
+
+		if (sof) {
+			struct xsk_tx_metadata *meta;
+			ktime_t launch = KTIME_MAX;
+
+			meta = xsk_buff_get_metadata(xsk_pool, desc->addr,
+						     desc->options);
+			xsk_tx_metadata_request(xsk_pool, &meta,
+						&ice_xsk_tx_metadata_ops,
+						&launch);
+			if (launch != KTIME_MAX)
+				txtime = launch;
+			else if (txtime == KTIME_MAX)
+				txtime = ice_tstamp_ring_asap(tstamp_ring);
+		}
+
+		sof = xsk_is_eop_desc(desc);
+		if (!sof)
+			continue;
+
+		tx_desc = ICE_TX_DESC(xdp_ring, idx);
+		tx_desc->cmd_type_offset_bsz |=
+			cpu_to_le64(ICE_TX_DESC_CMD_RS << ICE_TXD_QW1_CMD_S);
+		ice_tstamp_ring_add(tstamp_ring, ntu, txtime);
+	}
+}
+
+/**
  * ice_xmit_zc - take entries from XSK Tx ring and place them onto HW Tx ring
  * @xdp_ring: XDP ring to produce the HW Tx descriptors on
  * @xsk_pool: AF_XDP buffer pool pointer
@@ -794,6 +916,7 @@ bool ice_xmit_zc(struct ice_tx_ring *xdp_ring, struct xsk_buff_pool *xsk_pool)
 	struct xdp_desc *descs = xsk_pool->tx_descs;
 	u32 nb_pkts, nb_processed = 0;
 	unsigned int total_bytes = 0;
+	u16 ntu;
 	int budget;
 
 	ice_clean_xdp_irq_zc(xdp_ring, xsk_pool);
@@ -809,6 +932,7 @@ bool ice_xmit_zc(struct ice_tx_ring *xdp_ring, struct xsk_buff_pool *xsk_pool)
 	if (!nb_pkts)
 		return true;
 
+	ntu = xdp_ring->next_to_use;
 	if (xdp_ring->next_to_use + nb_pkts >= xdp_ring->count) {
 		nb_processed = xdp_ring->count - xdp_ring->next_to_use;
 		ice_fill_tx_hw_ring(xdp_ring, xsk_pool, descs, nb_processed,
@@ -820,6 +944,8 @@ bool ice_xmit_zc(struct ice_tx_ring *xdp_ring, struct xsk_buff_pool *xsk_pool)
 			    nb_pkts - nb_processed, &total_bytes);
 
 	ice_set_rs_bit(xdp_ring);
+	if (ice_is_txtime_cfg(xdp_ring))
+		ice_xmit_txtime_zc(xdp_ring, xsk_pool, descs, nb_pkts, ntu);
 	ice_xdp_ring_update_tail(xdp_ring);
 	ice_update_tx_ring_stats(xdp_ring, nb_pkts, total_bytes);
 
