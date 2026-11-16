@@ -3532,6 +3532,10 @@ static void ice_set_ops(struct ice_vsi *vsi)
 	if (vsi->type != ICE_VSI_PF)
 		return;
 
+	if (IS_ENABLED(CONFIG_XDP_SOCKETS) &&
+	    ice_is_feature_supported(pf, ICE_F_TXTIME))
+		netdev->xsk_tx_metadata_ops = &ice_xsk_tx_metadata_ops;
+
 	netdev->xdp_features = NETDEV_XDP_ACT_BASIC | NETDEV_XDP_ACT_REDIRECT |
 			       NETDEV_XDP_ACT_XSK_ZEROCOPY |
 			       NETDEV_XDP_ACT_RX_SG;
