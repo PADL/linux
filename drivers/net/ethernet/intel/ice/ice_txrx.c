@@ -229,14 +229,15 @@ tx_skip_free:
 	tx_ring->next_to_use = 0;
 	tx_ring->next_to_clean = 0;
 
+	/* XDP rings have no netdev but may have a Time Stamp ring */
+	if (ice_is_txtime_cfg(tx_ring))
+		ice_free_tx_tstamp_ring(tx_ring);
+
 	if (!tx_ring->netdev)
 		return;
 
 	/* cleanup Tx queue statistics */
 	netdev_tx_reset_queue(txring_txq(tx_ring));
-
-	if (ice_is_txtime_cfg(tx_ring))
-		ice_free_tx_tstamp_ring(tx_ring);
 }
 
 /**
@@ -506,6 +507,29 @@ void ice_tstamp_ring_add(struct ice_tstamp_ring *tstamp_ring, u16 tx_idx,
 		}
 	}
 	tstamp_ring->next_to_use = j;
+	tstamp_ring->tx_ntu = tx_idx;
+	tstamp_ring->txtime = txtime;
+}
+
+/**
+ * ice_tstamp_ring_asap - earliest time to release new Tx descriptors at
+ * @tstamp_ring: Time Stamp ring the descriptors are added to
+ *
+ * The later of the current PHC time and the last time added, so that time
+ * stamps never go backwards. The PHC is read as ice_ptp_read_src_clk_reg()
+ * does on E830, the only MAC with Tx Time, but without its lock, which is
+ * not BH safe: a read racing a timer adjustment may be off for one frame.
+ *
+ * Return: the time to release descriptors at for transmission at once.
+ */
+ktime_t ice_tstamp_ring_asap(const struct ice_tstamp_ring *tstamp_ring)
+{
+	struct ice_hw *hw = &tstamp_ring->tx_ring->vsi->back->hw;
+	u8 tmr_idx = hw->func_caps.ts_func_info.tmr_index_assoc;
+	ktime_t now;
+
+	now = ns_to_ktime(rd64(hw, E830_GLTSYN_TIME_L(tmr_idx)));
+	return max(now, tstamp_ring->txtime);
 }
 
 /**
@@ -800,6 +824,12 @@ ice_xdp_xmit(struct net_device *dev, int n, struct xdp_frame **frames,
 		xdp_ring = vsi->xdp_rings[queue_index];
 	}
 
+	/* only the queue's own NAPI may produce on a Time Stamp ring */
+	if (unlikely(ice_is_txtime_cfg(xdp_ring))) {
+		nxmit = -ENXIO;
+		goto out;
+	}
+
 	tx_buf = &xdp_ring->tx_buf[xdp_ring->next_to_use];
 	for (i = 0; i < n; i++) {
 		const struct xdp_frame *xdpf = frames[i];
@@ -815,6 +845,7 @@ ice_xdp_xmit(struct net_device *dev, int n, struct xdp_frame **frames,
 	if (unlikely(flags & XDP_XMIT_FLUSH))
 		ice_xdp_ring_update_tail(xdp_ring);
 
+out:
 	if (static_branch_unlikely(&ice_xdp_locking_key))
 		spin_unlock(&xdp_ring->tx_lock);
 
