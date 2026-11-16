@@ -1215,6 +1215,26 @@ static int vc4_dsi_bridge_attach(struct drm_bridge *bridge,
 				 &dsi->bridge, flags);
 }
 
+/*
+ * With video running, the controller occasionally leaves a queued packet
+ * pending with CMD_EN set and never sends it. Clearing and setting CMD_EN
+ * again sends it straight away, whereas the FIFO reset done on failure
+ * corrupts the video stream, so re-arm the packet a few times first. A
+ * queued packet is normally sent within a frame.
+ */
+#define VC4_DSI_XFER_TIMEOUT_MS		500
+#define VC4_DSI_VIDEO_XFER_TIMEOUT_MS	50
+#define VC4_DSI_VIDEO_XFER_REARMS	4
+
+static int vc4_dsi_wait_xfer(struct vc4_dsi *dsi, unsigned int timeout_ms)
+{
+	if (!wait_for_completion_timeout(&dsi->xfer_completion,
+					 msecs_to_jiffies(timeout_ms)))
+		return -ETIMEDOUT;
+
+	return dsi->xfer_result;
+}
+
 static ssize_t vc4_dsi_transfer(struct vc4_dsi *dsi,
 				const struct mipi_dsi_msg *msg, bool log_error)
 {
@@ -1223,6 +1243,8 @@ static ssize_t vc4_dsi_transfer(struct vc4_dsi *dsi,
 	u32 pkth = 0, pktc = 0;
 	int i, ret;
 	bool is_long = mipi_dsi_packet_format_is_long(msg->type);
+	bool video = !msg->rx_len &&
+		     (DSI_PORT_READ(DISP0_CTRL) & DSI_DISP0_ENABLE);
 	u32 cmd_fifo_len = 0, pix_fifo_len = 0;
 
 	mipi_dsi_create_packet(&packet, msg);
@@ -1337,16 +1359,25 @@ static ssize_t vc4_dsi_transfer(struct vc4_dsi *dsi,
 	DSI_PORT_WRITE(TXPKT1H, pkth);
 	DSI_PORT_WRITE(TXPKT1C, pktc);
 
-	if (!wait_for_completion_timeout(&dsi->xfer_completion,
-					 msecs_to_jiffies(500))) {
-		if (log_error) {
-			dev_err(&dsi->pdev->dev, "transfer interrupt wait timeout");
-			dev_err(&dsi->pdev->dev, "instat: 0x%08x, stat: 0x%08x\n",
-				DSI_PORT_READ(INT_STAT), DSI_PORT_READ(INT_STAT));
-		}
-		ret = -ETIMEDOUT;
-	} else {
-		ret = dsi->xfer_result;
+	ret = vc4_dsi_wait_xfer(dsi, video ? VC4_DSI_VIDEO_XFER_TIMEOUT_MS :
+					     VC4_DSI_XFER_TIMEOUT_MS);
+
+	for (i = 0; video && ret == -ETIMEDOUT &&
+		    i < VC4_DSI_VIDEO_XFER_REARMS &&
+		    (DSI_PORT_READ(TXPKT1C) & DSI_TXPKT1C_CMD_EN); i++) {
+		drm_dbg_kms(drm, "DSI packet stuck, re-arming (%d)\n", i + 1);
+		dsi->xfer_result = 0;
+		reinit_completion(&dsi->xfer_completion);
+		DSI_PORT_WRITE(TXPKT1C, pktc & ~DSI_TXPKT1C_CMD_EN);
+		udelay(1);
+		DSI_PORT_WRITE(TXPKT1C, pktc);
+		ret = vc4_dsi_wait_xfer(dsi, VC4_DSI_VIDEO_XFER_TIMEOUT_MS);
+	}
+
+	if (ret == -ETIMEDOUT && log_error) {
+		dev_err(&dsi->pdev->dev, "transfer interrupt wait timeout");
+		dev_err(&dsi->pdev->dev, "instat: 0x%08x, stat: 0x%08x\n",
+			DSI_PORT_READ(INT_STAT), DSI_PORT_READ(INT_STAT));
 	}
 
 	DSI_PORT_WRITE(INT_EN, DSI_PORT_BIT(INTERRUPTS_ALWAYS_ENABLED));
