@@ -272,6 +272,8 @@ struct ice_tstamp_ring {
 	void *desc;
 	u16 next_to_use;
 	u16 count;
+	u16 tx_ntu;			/* Tx ring index released so far */
+	ktime_t txtime;			/* time of the last descriptor added */
 } ____cacheline_internodealigned_in_smp;
 
 struct ice_rx_ring {
@@ -400,7 +402,7 @@ static inline bool ice_ring_ch_enabled(struct ice_tx_ring *ring)
 	return !!ring->ch;
 }
 
-static inline bool ice_ring_is_xdp(struct ice_tx_ring *ring)
+static inline bool ice_ring_is_xdp(const struct ice_tx_ring *ring)
 {
 	return test_bit(ICE_TX_RING_FLAGS_XDP, ring->flags);
 }
@@ -468,6 +470,7 @@ int ice_setup_rx_ring(struct ice_rx_ring *rx_ring);
 int ice_alloc_setup_tstamp_ring(struct ice_tx_ring *tx_ring);
 void ice_tstamp_ring_add(struct ice_tstamp_ring *tstamp_ring, u16 tx_idx,
 			 ktime_t txtime);
+ktime_t ice_tstamp_ring_asap(const struct ice_tstamp_ring *tstamp_ring);
 void ice_free_tx_ring(struct ice_tx_ring *tx_ring);
 void ice_free_rx_ring(struct ice_rx_ring *rx_ring);
 int ice_napi_poll(struct napi_struct *napi, int budget);

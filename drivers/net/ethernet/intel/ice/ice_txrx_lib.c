@@ -483,6 +483,38 @@ busy:
 }
 
 /**
+ * ice_xdp_txtime_update_tail - Release XDP Tx descriptors through Tx Time
+ * @xdp_ring: XDP Tx ring with Tx Time configured
+ *
+ * With Tx Time the hardware fetches Tx descriptors only as far as a time
+ * stamp descriptor allows. Descriptors produced since the last one are
+ * released for transmission at once.
+ */
+void ice_xdp_txtime_update_tail(struct ice_tx_ring *xdp_ring)
+{
+	struct ice_tstamp_ring *tstamp_ring;
+	u16 ntu = xdp_ring->next_to_use;
+
+	smp_rmb();	/* order flag read before pointer read */
+	tstamp_ring = READ_ONCE(xdp_ring->tstamp_ring);
+	if (unlikely(!tstamp_ring)) {
+		wmb();	/* order descriptor writes before the doorbell */
+		writel_relaxed(ntu, xdp_ring->tail);
+		return;
+	}
+
+	if (tstamp_ring->tx_ntu != ntu)
+		ice_tstamp_ring_add(tstamp_ring, ntu,
+				    ice_tstamp_ring_asap(tstamp_ring));
+
+	/* Force memory writes to complete before letting h/w
+	 * know there are new descriptors to fetch.
+	 */
+	wmb();
+	writel_relaxed(tstamp_ring->next_to_use, tstamp_ring->tail);
+}
+
+/**
  * ice_finalize_xdp_rx - Bump XDP Tx tail and/or flush redirect map
  * @xdp_ring: XDP ring
  * @xdp_res: Result of the receive batch
