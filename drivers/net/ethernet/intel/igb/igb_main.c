@@ -1852,7 +1852,7 @@ static int igb_save_txtime_params(struct igb_adapter *adapter, int queue,
 		return -EINVAL;
 
 	ring = adapter->tx_ring[queue];
-	ring->launchtime_enable = enable;
+	WRITE_ONCE(ring->launchtime_enable, enable);
 
 	return 0;
 }
@@ -3363,6 +3363,8 @@ static int igb_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	netdev->priv_flags |= IFF_UNICAST_FLT;
 	netdev->xdp_features = NETDEV_XDP_ACT_BASIC | NETDEV_XDP_ACT_REDIRECT |
 			       NETDEV_XDP_ACT_XSK_ZEROCOPY;
+	if (hw->mac.type == e1000_i210)
+		netdev->xsk_tx_metadata_ops = &igb_xsk_tx_metadata_ops;
 
 	/* MTU range: 68 - 9216 */
 	netdev->min_mtu = ETH_MIN_MTU;
@@ -4958,12 +4960,17 @@ void igb_clean_tx_ring(struct igb_ring *tx_ring)
 	while (i != tx_ring->next_to_use) {
 		union e1000_adv_tx_desc *eop_desc, *tx_desc;
 
+		/* check for eop_desc to determine the end of the packet */
+		eop_desc = tx_buffer->next_to_watch;
+		tx_desc = IGB_TX_DESC(tx_ring, i);
+
 		/* Free all the Tx ring sk_buffs or xdp frames */
 		if (tx_buffer->type == IGB_TYPE_SKB) {
 			dev_kfree_skb_any(tx_buffer->skb);
 		} else if (tx_buffer->type == IGB_TYPE_XDP) {
 			xdp_return_frame(tx_buffer->xdpf);
 		} else if (tx_buffer->type == IGB_TYPE_XSK) {
+			/* a launch time puts a context descriptor first */
 			xsk_frames++;
 			goto skip_for_xsk;
 		}
@@ -4974,10 +4981,7 @@ void igb_clean_tx_ring(struct igb_ring *tx_ring)
 				 dma_unmap_len(tx_buffer, len),
 				 DMA_TO_DEVICE);
 
-		/* check for eop_desc to determine the end of the packet */
-		eop_desc = tx_buffer->next_to_watch;
-		tx_desc = IGB_TX_DESC(tx_ring, i);
-
+skip_for_xsk:
 		/* unmap remaining buffers */
 		while (tx_desc != eop_desc) {
 			tx_buffer++;
@@ -4997,7 +5001,6 @@ void igb_clean_tx_ring(struct igb_ring *tx_ring)
 					       DMA_TO_DEVICE);
 		}
 
-skip_for_xsk:
 		tx_buffer->next_to_watch = NULL;
 
 		/* move us one more past the eop_desc for start of next pkt */
@@ -8413,6 +8416,7 @@ static bool igb_clean_tx_irq(struct igb_q_vector *q_vector, int napi_budget)
 		} else if (tx_buffer->type == IGB_TYPE_XDP) {
 			xdp_return_frame(tx_buffer->xdpf);
 		} else if (tx_buffer->type == IGB_TYPE_XSK) {
+			/* a launch time puts a context descriptor first */
 			xsk_frames++;
 			goto skip_for_xsk;
 		}
@@ -8426,6 +8430,7 @@ static bool igb_clean_tx_irq(struct igb_q_vector *q_vector, int napi_budget)
 		/* clear tx_buffer data */
 		dma_unmap_len_set(tx_buffer, len, 0);
 
+skip_for_xsk:
 		/* clear last DMA location and unmap remaining buffers */
 		while (tx_desc != eop_desc) {
 			tx_buffer++;
@@ -8447,7 +8452,6 @@ static bool igb_clean_tx_irq(struct igb_q_vector *q_vector, int napi_budget)
 			}
 		}
 
-skip_for_xsk:
 		/* move us one more past the eop_desc for start of next pkt */
 		tx_buffer++;
 		tx_desc++;

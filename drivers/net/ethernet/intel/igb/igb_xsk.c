@@ -512,8 +512,48 @@ int igb_clean_rx_irq_zc(struct igb_q_vector *q_vector,
 	return failure ? budget : (int)(total_packets + discarded);
 }
 
+struct igb_xsk_tx_request {
+	struct igb_ring *tx_ring;
+	bool launch_time;
+};
+
+/* One context descriptor before the frame's data descriptor carries its
+ * launch time: the nanoseconds within the PHC's second, in 32 ns units,
+ * as igb_tx_ctxtdesc() fills it for an skb.
+ */
+static void igb_xsk_request_launch_time(u64 launch_time, void *priv)
+{
+	struct igb_xsk_tx_request *req = priv;
+	struct igb_ring *tx_ring = req->tx_ring;
+	struct e1000_adv_tx_context_desc *context_desc;
+	u16 i = tx_ring->next_to_use;
+	u32 ns;
+
+	if (!req->launch_time)
+		return;
+
+	div_u64_rem(launch_time, NSEC_PER_SEC, &ns);
+	context_desc = IGB_TX_CTXTDESC(tx_ring, i);
+	context_desc->vlan_macip_lens = 0;
+	context_desc->seqnum_seed = cpu_to_le32(ns / 32);
+	context_desc->type_tucmd_mlhl = cpu_to_le32(E1000_TXD_CMD_DEXT |
+						    E1000_ADVTXD_DTYP_CTXT);
+	context_desc->mss_l4len_idx = 0;
+
+	i++;
+	tx_ring->next_to_use = (i < tx_ring->count) ? i : 0;
+}
+
+const struct xsk_tx_metadata_ops igb_xsk_tx_metadata_ops = {
+	.tmo_request_launch_time = igb_xsk_request_launch_time,
+};
+
 bool igb_xmit_zc(struct igb_ring *tx_ring, struct xsk_buff_pool *xsk_pool)
 {
+	struct igb_xsk_tx_request req = {
+		.tx_ring = tx_ring,
+		.launch_time = READ_ONCE(tx_ring->launchtime_enable),
+	};
 	unsigned int budget = igb_desc_unused(tx_ring);
 	u32 cmd_type, olinfo_status, nb_pkts, i = 0;
 	struct xdp_desc *descs = xsk_pool->tx_descs;
@@ -528,15 +568,26 @@ bool igb_xmit_zc(struct igb_ring *tx_ring, struct xsk_buff_pool *xsk_pool)
 	if (test_bit(IGB_RING_FLAG_TX_DISABLED, &tx_ring->flags))
 		return true;
 
+	/* a frame with a launch time needs a context descriptor too */
+	if (req.launch_time)
+		budget /= 2;
+
 	nb_pkts = xsk_tx_peek_release_desc_batch(xsk_pool, budget);
 	if (!nb_pkts)
 		return true;
 
 	for (; i < nb_pkts; i++) {
+		struct xsk_tx_metadata *meta;
+
 		dma = xsk_buff_raw_get_dma(xsk_pool, descs[i].addr);
+		meta = xsk_buff_get_metadata(xsk_pool, descs[i].addr,
+					     descs[i].options);
 		xsk_buff_raw_dma_sync_for_device(xsk_pool, dma, descs[i].len);
 
+		/* the frame's first descriptor watches for its completion */
 		tx_buffer_info = &tx_ring->tx_buffer_info[tx_ring->next_to_use];
+		xsk_tx_metadata_request(xsk_pool, &meta,
+					&igb_xsk_tx_metadata_ops, &req);
 		tx_buffer_info->bytecount = descs[i].len;
 		tx_buffer_info->type = IGB_TYPE_XSK;
 		tx_buffer_info->xdpf = NULL;
