@@ -887,6 +887,7 @@ void igb_clean_rx_ring_zc(struct igb_ring *rx_ring);
 int igb_clean_rx_irq_zc(struct igb_q_vector *q_vector,
 			struct xsk_buff_pool *xsk_pool, const int budget);
 bool igb_xmit_zc(struct igb_ring *tx_ring, struct xsk_buff_pool *xsk_pool);
+extern const struct xsk_tx_metadata_ops igb_xsk_tx_metadata_ops;
 int igb_xsk_wakeup(struct net_device *dev, u32 qid, u32 flags);
 
 #endif /* _IGB_H_ */
