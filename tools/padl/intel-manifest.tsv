@@ -1,10 +1,10 @@
-# PADL only. PADL Intel network driver patches that padl-intel-6.18 must carry,
+# PADL only. PADL Intel network driver patches that rpi-6.18.y-xebros-rmu must carry,
 # checked by check-intel-patches.sh in this directory.
 #
 # Base: a40f735325391 fixup! media: dt-bindings: media: Add binding for the Raspberry PI HEVC decoder
 #
 # patch	DRIVER	UPSTREAM	PATCH-ID	SUBJECT
-#	PATCH-ID is git patch-id --stable of the commit on padl-intel-6.18.
+#	PATCH-ID is git patch-id --stable of the commit on rpi-6.18.y-xebros-rmu.
 #	UPSTREAM is where an equivalent commit sits upstream, "-" for none
 #	(PADL patches not yet posted or merged).
 # marker	MODULE	KIND	VALUE	WHAT IT PROVES
