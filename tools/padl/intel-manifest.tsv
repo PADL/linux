@@ -1,0 +1,97 @@
+# PADL only. PADL Intel network driver patches that padl-intel-6.18 must carry,
+# checked by check-intel-patches.sh in this directory.
+#
+# Base: a40f735325391 fixup! media: dt-bindings: media: Add binding for the Raspberry PI HEVC decoder
+#
+# patch	DRIVER	UPSTREAM	PATCH-ID	SUBJECT
+#	PATCH-ID is git patch-id --stable of the commit on padl-intel-6.18.
+#	UPSTREAM is where an equivalent commit sits upstream, "-" for none
+#	(PADL patches not yet posted or merged).
+# marker	MODULE	KIND	VALUE	WHAT IT PROVES
+#	str+ / str-: string present / absent in the module.
+#	dbg+: dynamic debug format, tested only in a module built with
+#	CONFIG_DYNAMIC_DEBUG.
+#	sym+: function in the module's symbols (global, or static with its
+#	address in an ops table, so never inlined away); sym?: a static
+#	function a compiler may inline, reported but not failed.
+patch	igb	-	3ec1de5500158716c8033951289826a550daacd9	igb: restore the SDP pin functions after igb_ptp_reset()
+patch	igb	-	74e391f043be67acd7d116683de421ed546cbb00	igb: bind an i210 with an unprogrammed NVM
+patch	igb	-	720212bde0553ce880e6de8ac50b967f2928fa03	igb: refuse an XSK pool or MTU whose frames would not fit one buffer
+patch	igb	-	22b432f446ce7883cafb5c97b833ebd403bdae0d	igb: drop frames split across descriptors in the zero-copy rx path
+patch	igc	-	918ab3313aca2f966541d76e02e10f7f92746b73	igc: refuse an XSK pool whose rounded buffer would not fit a frame
+patch	igb	-	41cd4a5bf2aaedf2d214dd7e7620509aa466248c	igb: retrieve the i210 Tx timestamp from the TimeSync interrupt
+patch	igb	-	77f29d91fcaed4c223181c3c5e9d6c9ea99985da	igb: program the random MAC of an unprogrammed i210 into RAR0
+patch	igb	-	ca70fa1d32cf4efb179d2f3e329ceadde629a536	igb: check the bound XSK pool of every queue when the MTU changes
+patch	igc	-	00c258a223e436b0694cf1e3fa16a89371f1a500	igc: keep the auxiliary timer functions when TSN offload is enabled
+patch	igc	-	35d481f5c1eff5933e461cdd7348567ad9215819	igc: restore the SDP pin functions after igc_ptp_reset()
+patch	igc	-	61a2598c8c6614f6450757f65a28db02c4c64318	igc: stop NAPI before tearing down a ring for XDP or an XSK pool
+patch	igc	-	9cda35a204b1d556d6852a1cde8a1398faff2ae1	igc: re-anchor the Qbv cycle when SYSTIM is set
+patch	igc	-	219cbe2ab2ebd942c2fccf5637d33b2574fb999d	igc: reset the adapter when SYSTIM steps a Qbv cycle ahead
+patch	igc	-	bb003a1bbd3e59379413225c798ae47ed38c59e3	igc: write BASET after a SYSTIM step only when the I226 accepts it
+patch	igc	-	7857debc51f803a268f8a69192cb500501da7999	igc: keep a Qbv reset pending until the adapter is reset
+patch	igc	-	2585e3357d34ca5ff02f33af5286057ea61200f0	igc: read the held Qbv cycle start before SYSTIM is written
+patch	igc	-	76701e8d3c6f17b507025d94cbc8c8c95e334a06	igc: restart a pending Qbv cycle from the reset task while down
+patch	igc	-	e91e5f3d8d41ac41a2326c59a4ed124c8bdf6b52	igc: keep a PHC step made while the interface is down
+patch	igc	-	63254365911aefcb77f89bed7a767708b94e9b97	igc: list the LMVP and blank-NVM I226 IDs in igc_is_device_id_i226()
+patch	igc	-	f79209932eeb0d6b2eec05b163b8ef98ac629fac	igc: read BASET only when a step needs it, before SYSTIM is read
+patch	igc	-	8fd4f2dd1a87bec0a71c62db462ff9223fa64c66	igc: restart a taprio cycle at its base time after a step back
+patch	igc	-	ab9733d0de4e66153bc2603ad18e78a062f9c13e	Revert "igc: refuse an XSK pool whose rounded buffer would not fit a frame"
+patch	igc	tnguy/net-queue:45c2cf03c0b1a,next-queue:abd1e8b8f1392	d7ccbff8b8ccc17f5c38ac1d1caff3dc0de17a12	igc: Fix Tx stop threshold to cover empty frame descriptors
+patch	igc	tnguy/net-queue:97e0e23ae88c3,next-queue:c5d562b5f9cc1	25742a098f401385f89ab169d4d81cd06eb1409c	igc: Flush pending Tx descriptors before returning NETDEV_TX_BUSY
+patch	igc	tnguy/net-queue:05f932cbbf6c1,next-queue:45cdeabf876ba	46b04b08a78839602064897aac5ec19f4ddbaacf	igc: pad preemptible packets before reserving TX timestamps
+patch	igc	tnguy/net-queue:5ac0acb60d6e0,next-queue:e5ad3dba191cc	7e89db8ae2fca301535a1ff325255099f6e04043	igc: prepare TSO and checksum offloads before TX timestamps
+patch	igc	tnguy/net-queue:aa0ba3b95228f,next-queue:4ea939791774c	bdab90a80c1882e094fc766da6b6feb2ecf0ac1f	igc: only strip RX timestamp header from first buffer
+patch	igc	tnguy/net-queue:0aed7907de8f0,next-queue:332ee853eec79	45e9077883b099764e09d744335af9eed257b9e8	igc: fix AF_XDP receive buffer size for 2K UMEM chunks
+patch	igc	tnguy/net-queue:d354c23172147,next-queue:a5df95a0245c0	b461fe43ff81bff38b420a2d17e09d69a7071d3c	igc: return XSK frame copies on XDP_TX failure
+patch	xsk	list:20261019-xsk-zc-rx-double-free-v1-1-2aa19f6628fb@vecima.com	f0c736f1bba865aec7a40053b86854c07201c673	xsk: Do not free ZC Rx buffer when the Rx ring is full
+patch	igc	-	dfc1d75403929047c66f4c6a1cf2e6bf25465c40	igc: write TIMINCA under tmreg_lock
+patch	igc	-	154a6f39b3cd3c84f579dafbb1800085007c273b	igc: hold the address list lock when programming the Rx mode directly
+patch	igc	-	c9063411d8ed135fd49dac3de911b503ab9f715b	igc: write only MTA registers that differ and read the table back
+patch	igc	-	7e44974710f14a7f447728d5f6c741c99a4a3044	igc: check the MTA in one loop, as igb does for I210
+patch	ice	-	d10e3cb56b53be70d5a8b0fe1dd77249572ed69e	ice: factor out the Tx time stamp descriptor write
+patch	ice	-	8be7d304d1a1d0a71efdd6a2394cd3c66fefe8a5	ice: enable Tx Time on the XDP ring of an AF_XDP zero-copy queue
+patch	ice	-	7c605ca246329943f1dc3ec707610db4009dfbfc	ice: add AF_XDP Tx launch time support for E830
+patch	ice	-	293b65efdf90bf3c04d1a579899b174ac546c01a	ice: dpll: accept audio frequencies on the E810-T SMA and U.FL pins
+patch	ice	-	521bf87afdf37fb1a9e5d6cdf25589c4c7a72561	ice: debugfs: read-only CGU I2C probe
+patch	igb	-	2076d7170ebd80458c20e92689b66fb2fc6bdd7a	igb: hold the address list lock when programming the Rx mode directly
+patch	igb	-	53b19a4799984ba88cea04d27699247eba12caa0	igb: write only MTA registers that differ and read the table back
+patch	igb	-	95a8795b7de60b2f1418585f410cfb57f60b40cf	igb: honour AF_XDP Tx launch time on the i210
+patch	igc	-	6f455b13411021b17de4270e798fa873f689926e	igc: read SYSTIM under tmreg_lock when checking a taprio schedule
+patch	igc	-	9e28accfbc415f3294cbd8991be5f43ce6ef3edf	igc: choose an AF_XDP launch time's cycle from SYSTIM
+patch	igc	-	53304c48ffbcc4089774e7a7ba18ff6d3df89028	igc: move an skb launch time from its clock into SYSTIM
+patch	igc	-	ecbd56cd84ce583caf02b0b53cfef763dd9cf9e0	igc: keep a launch time's offset in 64 bits until it is reduced
+patch	igc	-	fcd56d278022c7f2986b39d23d93d7a08c6debd1	igc: estimate the current Qbv cycle by rounding down before base time
+patch	igc	-	eb19a14ad86f91265b04032c6cced7f238b2fb8f	igc: rate-limit the launch time end-of-cycle warning
+patch	igc	-	a47dfa2b9c688214a03b1aa6fd98f43d79261867	igc: skip a launch-time clock bracket that a clock step reversed
+patch	igc	-	2da3341708805ce155547408fd6e8beeb792348d	igc: estimate an skb's Qbv cycle from SYSTIM after its clock reads
+patch	igc	-	f11eef8756d637d235e26ef46ac09cf7fd969d58	igc: list every case where last_tx_cycle is ahead of the current cycle
+patch	igc	-	d8613c2e3a69faa2d6ecce6f9df68da1fcb23db5	igc: print the launch time warning's txtime as signed
+patch	igc	-	195b45e81920d162e456a14314b3844dc1042a65	Revert "igc: estimate the current Qbv cycle by rounding down before base time"
+patch	igc	-	c5f15766b7620629953b77b929d766a50564895a	igc: place a launch time in the Qbv cycle the hardware runs
+patch	igc	-	30103b6b3c5acedf8aed036bcab876fccf1b2bf7	igc: write the tail at once for a launch-time packet
+patch	igc	-	16b5596ba91fa083c9cf4ff8183e0471d9a6f566	igc: wait out the end of a Qbv cycle before placing a launch time
+patch	igc	-	e2b8b6888542121959269e1706a45fc4d9c53a19	igc: report each launch time's cycle placement under dynamic debug
+patch	igc	-	c8d5e3af7fe2bda46857e85799ebd1b7b55ee21e	igc: report each launch-time SYSTIM bracket under dynamic debug
+patch	igc	-	48444ddac6909466ff0a347fba3c9c743ebb1367	igc: keep a launch time 50 us clear of the end of a Qbv cycle
+patch	igc	-	f2e832b3ede00c459ba75c1f9e349769f6a406f5	igc: let CBS be disabled on queue 0 while queue 1 still has it
+patch	igc	-	38998d23660a209cf45ccb3b63156db207a5891d	igc: move a launch time at the end of the 1 s cycle to the next
+patch	igc	-	768ea9b393c33196e454d5f781d0fd01a8aca75b	igc: change a running CBS shaper's slope and credit only
+patch	igc	-	f2943016e777a083d0638ee697d1fcc8ad794ce9	igc: leave igc's own running cycle alone on a TSN update
+patch	igc	-	8df163fa0c8eff2308f4815ba0514cbad4da8ad3	Revert "igc: leave igc's own running cycle alone on a TSN update"
+patch	igc	-	5f2a471ce337c5d2141e784b5a8c25188e1b562b	igc: note that launch time under taprio can stall an I226 queue
+marker	igc	str-	Packet with txtime=%llu may not be honoured	the stock launch-time placement, which reads CLOCK_TAI as now, is gone (removed by "igc: wait out the end of a Qbv cycle before placing a launch time")
+marker	igc	str-	Disabling CBS on queue0 before queue1	"igc: let CBS be disabled on queue 0 while queue 1 still has it" (launch-time series)
+marker	igc	dbg+	launch time %lld now %lld cycle %lld first %d empty %d wait %lld	v3 placement in the Qbv cycle the hardware runs, from SYSTIM ("report each launch time's cycle placement", "wait out the end of a Qbv cycle")
+marker	igc	dbg+	systim %lld clock %d at %lld bracket %lld ns after %d reads	an skb launch time is moved from its clock into SYSTIM by a bracketed PHC read ("move an skb launch time from its clock into SYSTIM", "report each launch-time SYSTIM bracket")
+marker	igc	sym?	igc_tx_systim	the SYSTIM/clock bracket of the launch-time series
+marker	igc	str+	PHC stepped past the Qbv cycle, resetting	the Qbv/SYSTIM step fixes ("reset the adapter when SYSTIM steps a Qbv cycle ahead")
+marker	igc	dbg+	Failed to update the Multicast Table Array, too many retries	"igc: write only MTA registers that differ and read the table back"
+marker	igb	sym+	igb_xsk_request_launch_time	"igb: honour AF_XDP Tx launch time on the i210" (PHC nanoseconds in the context descriptor)
+marker	igb	str+	Requested MTU size does not fit the XSK buffer of queue %d	"igb: check the bound XSK pool of every queue when the MTU changes" (folded into the XSK pool check on 7.1)
+marker	igb	str+	XSK chunk size %u is too small for the MTU: %u needed	"igb: refuse an XSK pool or MTU whose frames would not fit one buffer" (latest version)
+marker	igb	str+	rx_queue_%u_zc_split_drops	"igb: drop frames split across descriptors in the zero-copy rx path"
+marker	igb	str+	I210 with unprogrammed NVM: using random MAC %pM	"igb: bind an i210 with an unprogrammed NVM"
+marker	ice	sym+	ice_xsk_request_launch_time	"ice: add AF_XDP Tx launch time support for E830" (launch time is PHC time)
+marker	ice	sym+	ice_tstamp_ring_asap	"ice: enable Tx Time on the XDP ring of an AF_XDP zero-copy queue" (releases at the PHC time read from GLTSYN_TIME)
+marker	ice	sym+	ice_tstamp_ring_add	"ice: factor out the Tx time stamp descriptor write"
+marker	ice	str+	cgu part number: 0x%02x timer owner: %d	"ice: debugfs: read-only CGU I2C probe"
