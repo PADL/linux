@@ -1,9 +1,12 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-2.0
 #
 # PADL only: confirm that a kernel carries every PADL Intel network driver
 # patch listed in intel-manifest.tsv. Read-only: it never writes to the tree,
 # the modules or the host.
+#
+# Needs bash: run it as ./check-intel-patches.sh or bash check-intel-patches.sh
+# (under sh it starts itself again with bash, or stops if there is none).
 #
 #   check-intel-patches.sh tree [GIT_DIR_OR_WORKTREE [REV]]
 #	Every "patch" line's subject must be a commit reachable from REV
@@ -24,6 +27,15 @@
 # to this script), -s SINCE (tree mode: git log --since, default 2026-01-01).
 #
 # Exit status: 0 when every check passes, 1 when any fails, 2 on usage.
+
+# POSIX sh up to here: the rest is bash.
+if [ -z "${BASH_VERSION:-}" ]; then
+	if command -v bash >/dev/null 2>&1; then
+		exec bash "$0" "$@"
+	fi
+	echo "check-intel-patches.sh: run with bash" >&2
+	exit 2
+fi
 
 set -u
 # Byte-wise matching of module files.
@@ -229,7 +241,7 @@ tree) tree_check "$@" ;;
 host) host_check ;;
 modules) modules_check "$@" ;;
 *)
-	sed -n '4,27p' "$0" >&2
+	sed -n '4,30p' "$0" >&2
 	exit 2
 	;;
 esac
