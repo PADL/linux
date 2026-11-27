@@ -26,6 +26,8 @@
 # Exit status: 0 when every check passes, 1 when any fails, 2 on usage.
 
 set -u
+# Byte-wise matching of module files.
+export LC_ALL=C
 
 here=$(cd "$(dirname "$0")" && pwd)
 manifest=$here/intel-manifest.tsv
@@ -149,7 +151,12 @@ marker_check() {
 			if [ -n "$ksyms" ]; then
 				grep -qE " $value(\.[a-z0-9.]+)?([[:space:]]|$)" "$ksyms" && found=1
 			else
-				grep -aqP "\x00\Q$value\E(\.[a-z0-9.]+)?\x00" "$tmp" && found=1
+				# A whole name in the string table; the linker
+				# shares a name's bytes with a longer one ending
+				# in it, such as x86's __pfx_<name> padding symbol.
+				tr '\0' '\n' <"$tmp" |
+					grep -aqxE "(__pfx_)?$value(\.[a-z0-9.]+)?" &&
+					found=1
 			fi
 			if [ $found = 1 ]; then
 				pass "$mod: symbol $value: $what"
